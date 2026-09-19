@@ -3,10 +3,14 @@
 Research notes for the model side. Open questions, not a spec. Shares the repo,
 `pyproject.toml`, and `catface.core` with PLAN_PROJECT.md.
 
-Delivers one artifact: `models/expression_head.onnx`. Classifies cat facial
-expression from 48 landmarks. If it turns out badly, the app still ships the
-landmark viewer, the derived geometry readouts, and the warper, none of which
-depend on it.
+Delivers two artifacts:
+
+- `models/expression_head.onnx` — classifies cat facial expression from 48
+  landmarks. If it turns out badly, the app still ships the landmark viewer, the
+  derived geometry readouts, and the warper, none of which depend on it.
+- `models/class_means.json` — per-class Procrustes mean shapes, out of E1. The
+  app's `/edit` endpoint *does* depend on this one, so it ships early and
+  separately from the model. See "Editor maths".
 
 ## Setup
 
@@ -18,6 +22,10 @@ train/evaluate/export. May import `core`. Never imported by `api`.
 Preprocessing comes from `core.geometry`. Never reimplement letterboxing, the crop
 margin, or Procrustes here. That's the classic route to a model that works in the
 notebook and fails in prod.
+
+`core.geometry` is delivered by the app track's M2, and research starts at M4, so
+it exists before E1 needs it. If the order ever slips, E1 blocks on it rather than
+growing a local copy — the duplication is the failure mode, not the delay.
 
 One directory per run under `experiments/`: config, metrics.json, git sha, notes.
 
@@ -108,6 +116,12 @@ classes separate at all in the first few PCs.
 
 This is the cheap look at whether the signal exists before training anything.
 
+Also write `models/class_means.json` here: the per-class mean of the aligned
+landmarks, which is one groupby over the alignment E1 already computes. The app's
+warper blocks on this file and not on the model, so producing it on day two of
+research instead of at export time is what makes PLAN_PROJECT.md's M5 fallback
+("manual class picker, everything else still works") actually true.
+
 ### E2 baselines (1 day)
 Same splits for all of these, stratified by class:
 1. Logistic regression on two derived ratios (eye aperture, ear angle)
@@ -157,6 +171,10 @@ mean_shape[c] = mean of aligned landmarks for class c
 delta = mean_shape[target] - mean_shape[predicted]
 edited = user_landmarks + intensity * delta
 ```
+
+The first two lines are E1's job and their output is `models/class_means.json`
+(class name → 48×2 aligned mean). The last two run in the app, in `core`. The app
+never recomputes a mean shape at request time.
 
 Un-align back to image coordinates, triangulate, warp. This keeps the cat's identity
 and moves only the expression, because the delta is a class difference rather than a

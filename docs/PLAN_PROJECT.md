@@ -3,8 +3,11 @@
 Working notes for the app half of cat-face-studio. Decisions, not a spec. Details
 get filled in when I get there.
 
-Companion: PLAN_RESEARCH.md. That produces `models/expression_head.onnx`. This
-consumes it. Nothing here waits on it.
+Companion: PLAN_RESEARCH.md. That produces two artifacts this one consumes:
+`models/expression_head.onnx` (the classifier) and `models/class_means.json` (the
+per-class Procrustes mean shapes the editor maths subtracts). Nothing here waits
+on the classifier — but `/edit` genuinely cannot work without the mean shapes, so
+they land early, out of E1, not with the model. See M3.
 
 ## What it is
 
@@ -46,6 +49,12 @@ Rule: `api` never imports `ml`. Write a test that greps for it.
 `core` is the contract. Letterboxing, crop margin, Procrustes all live there and get
 called by both training and serving. Duplicating them is how you get a model that
 scores well in the notebook and badly in prod.
+
+Who builds `core`, since both tracks import it:
+- `core/geometry.py` (letterbox, crop margin, Procrustes) — **M2**, it's the
+  inference pipeline's own dependency. The research track's E1 blocks on it.
+- `core/graph.py` (anatomical adjacency) — **E3**, nothing else needs it.
+- `core/warp.py` — M3. `core/schemas.py`, `core/states.py` — M1.
 
 ## Dependencies (uv)
 
@@ -194,6 +203,14 @@ No weights in git. `models/manifest.json` (committed) lists name, file, sha256,
 source, licence, input shape, metrics. `scripts/fetch_weights.py` downloads and
 verifies. Runs in the Docker build and in `make setup`.
 
+Both tracks write `manifest.json` — M2 adds the vendored detector entries, the
+research track adds the expression head. One entry per model, keyed by name, so
+the two never touch the same lines.
+
+`models/class_means.json` is committed, not fetched: it's a few KB of floats, it
+has no licence encumbrance (it's derived from landmark geometry, not redistributed
+weights), and committing it means the warper works on a clean clone.
+
 Licence: the vendored weights and CatFLW are both CC BY-NC 4.0. Don't redistribute
 them, say so in the README, cite the papers, and state separately that my own code
 is MIT.
@@ -265,7 +282,10 @@ Each ends green and tagged.
 - **M2** real landmarks: fetch_weights, manifest, OpenVINOEngine, tflite load
   verified, E2E on fixtures
 - **M3** warper: Delaunay with boundary anchors (image corners + ring around the face
-  box, or the warp tears at the edges), per-triangle affine, wire up `/edit`
+  box, or the warp tears at the edges), per-triangle affine, wire up `/edit`.
+  Needs `models/class_means.json` from E1 — the only research output on this
+  milestone's critical path. If E1 hasn't run, a hand-written placeholder with two
+  classes unblocks the warper; the real file swaps in without a code change.
 - **M4** frontend: upload, canvas overlay, state readout, target + slider,
   before/after, history
 - **M5** expression head from the research side. If it's late, the class picker in
@@ -286,7 +306,7 @@ Each ends green and tagged.
 | Risk | Fallback |
 |---|---|
 | tflite won't load in OpenVINO | ONNX Runtime, same protocol |
-| classifier late or bad | ship the landmark viewer, the derived geometry readouts, and the warper with a manual class picker. All three work without it. |
+| classifier late or bad | ship the landmark viewer, the derived geometry readouts, and the warper with a manual class picker. All three work without it — the warper needs `class_means.json` (E1), not the model. |
 | ear warp smears | read-only channel, documented |
 | Postgres too heavy for the host | SQLite in prod with WAL, Postgres still proven in CI, tradeoff documented |
 | no time for full observability | metrics + one alert, note what was cut |
