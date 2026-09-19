@@ -6,6 +6,289 @@ was. Newest on top.
 
 ---
 
+## 2026-09-19 — `append_section` replaces a same-named section instead of duplicating it on rerun
+
+**Decided:** `scripts/dataset_stats.py:append_section` now parses the
+existing `README.txt` into its `## heading` sections, drops any section
+matching the heading being written, and appends the fresh one — instead of a
+plain file-append.
+
+**Why:** rerunning `scripts/landmark_cache.py` (done twice in this session —
+once to fix the `detection_failed` crash, once to fix the `detector_confidence`
+proxy) calls `append_section(readme_path, "Detector run (E0)", ...)` each
+time. With a plain append, the second run left two "## Detector run (E0)"
+sections in `data/cat-emotions-3/README.txt` and `data/cat-emotions-7/README.txt`
+— found by grepping for `^## ` after the second run. A generated doc that
+can't be regenerated cleanly is a bug in the generator, not a one-off to
+patch by hand.
+
+**Alternative considered:** leave it append-only and tell whoever reruns the
+pipeline to manually clean the README first. Rejected — `scripts/landmark_cache.py`
+is meant to be rerun whenever the detector or filter changes; making the
+human remember a manual cleanup step defeats the point of scripting this at
+all.
+
+**How to apply:** `dataset_stats.write_readme` (full overwrite) and
+`append_section` (targeted replace) are now both rerun-safe. Any future
+section-writer added to either script should follow the same replace, not
+append, rule.
+
+---
+
+## 2026-09-19 — `detect_face_box`/`detect_landmarks` can crash on a degenerate box; `landmark_cache.py` catches it, `core`/`ml` don't change
+
+**Decided:** running the batch cache over `cat-emotions-3` hit a real crash —
+`crop_and_resize` raised `cv2.error: !ssize.empty()` on
+`data/cat-emotions-3/train/attentive/CAT_01_00000153_020_png...jpg` because
+`detect_face_box`'s localizer output, once clipped to the image by
+`expand_box`, produced a zero-width or zero-height crop region. `build_cache`
+in `scripts/landmark_cache.py` now wraps the `detect_face_box` +
+`detect_landmarks` calls in `try/except cv2.error` and records the row as
+`plausible=False`, `drop_reasons=["detection_failed"]` instead of crashing the
+whole batch. One image out of 2742 hit this.
+
+**Why:** the whole point of E0 is finding out what breaks on the Roboflow
+distribution — a script that dies on image 1153 of 2742 doesn't answer that
+question, and a genuinely bad localizer output is itself a valid E0 finding,
+not a bug to hide.
+
+**Alternative considered:** make `expand_box`/`crop_and_resize` in
+`core/geometry.py` defensive against zero-size crops. Rejected — those are
+shared, generic preprocessing primitives used by both tracks; silently
+tolerating a degenerate box there would hide the same failure from the app
+track's live inference path instead of surfacing it. The failure belongs to
+the caller that can decide what "this image didn't work" means (here: cache a
+dropped row).
+
+**How to apply:** if this shows up on more than a handful of images once
+`cat-emotions-7` or later datasets run through the same path, that's a
+detector-quality finding for the stop condition, not just an edge case to
+catch and move on from.
+
+---
+
+## 2026-09-19 — Near-duplicate hash switched from average hash to dHash after it produced a false "identical" pair
+
+**Decided:** `scripts/dedupe.py`'s hash function compares adjacent-pixel
+brightness gradients (difference hash / dHash), not raw brightness against
+the image mean (average hash).
+
+**Why:** the average hash implementation, tried first, hashed two completely
+unrelated cats (different animals, different backgrounds — one in grass, one
+studio-lit) to Hamming distance 0 out of 64 bits — a false "exact match."
+Visually inspecting the image pair confirmed it was not a duplicate. The root
+cause: 8x8 average brightness collapses to the same rough light/dark
+composition for very different photos when both datasets tend toward
+"cat centered on a plain background." Re-tested the same pair with dHash:
+30/64 bits differ (clearly distinct), and running dHash across the full
+2071×671 pair-set found zero matches at Hamming distance ≤5 (minimum distance
+found was 6), versus average hash's 126 candidate "near-duplicates" at the
+same threshold — spot-checking those confirmed they were false positives too.
+
+**Alternative considered:** keep average hash but raise the hash resolution
+(16x16 or 32x32) to add discriminating power. Tested — still weaker than
+dHash on the same false-positive pair (16x16 average hash: 23/256 bits
+differ, ~9%, still borderline; dHash: ~36-47% differ across hash sizes).
+Rejected in favor of switching algorithms rather than tuning the weaker one.
+
+**How to apply:** the reported result — 0 near-duplicates between
+`cat-emotions-3` and `cat-emotions-7` at Hamming ≤5 — is the dHash result;
+`data/cache/near_duplicates.csv` and the per-dataset `README.txt` files
+reflect it. If a future dataset pair does show dHash matches, they're much
+more likely to be real than an average-hash result would have been.
+
+---
+
+## 2026-09-19 — `dedupe.py`, `dataset_stats.py`, `landmark_cache.py` all live in `scripts/`, not `catface.ml`
+
+**Decided:** all three are one-shot, run-once scripts under `scripts/`,
+invoked directly (`uv run python scripts/<name>.py`), not through
+`catface.ml`'s `-m` convention. `src/catface/ml/plausibility.py` stays in the
+package, since it's reusable filter logic other code imports and tests
+(`tests/test_plausibility.py`), not a script.
+
+**Why:** user direction, given directly during implementation — the
+distinguishing line drawn here is "run once, standalone script" (→
+`scripts/`) versus "importable logic other code depends on" (→ `catface.ml`
+or `core`), separate from the earlier fetch-scripts rule (shared app/research
+infra → `scripts/`). `landmark_cache.py` imports `dataset_stats.append_section`
+directly as a sibling module in the same directory — no package `__init__.py`
+needed, since scripts run standalone and Python puts the invoked script's own
+directory on `sys.path` automatically.
+
+**Alternative considered:** keep `landmark_cache.py` under `catface.ml` per
+AGENTS.md's literal "research track scripts (E0–E5, export)" line, since it's
+the only one of the three that touches the detector model. Overridden by
+direct user instruction mid-implementation.
+
+**How to apply:** AGENTS.md's `uv run python -m catface.ml.<script>` line
+doesn't cover any of the three E0 scripts. `detect_landmarks.py` (the
+single-image CLI) and `plausibility.py` (filter logic) are the only
+`catface.ml` files this experiment added or touches.
+
+---
+
+## 2026-09-19 — E0 skips `experiments/`; outputs live under `data/cache/` instead
+
+**Decided:** no `experiments/e0/` run directory. `data/cache/landmarks.parquet`
+carries the cache, `data/cache/README.md` documents it (schema, pass/drop
+counts, stop-condition answer, human-TODO checklist), and
+`data/cache/{overlays,plots,near_duplicates.csv}` hold the supporting
+artifacts. `.gitignore`'s existing blanket `experiments/` line is untouched.
+
+**Why:** user direction — this pass isn't a tuning run with
+config/metrics.json-per-attempt bookkeeping the way E2 onward's model
+training will be; it's a one-shot cache-building pass over a fixed detector,
+so the `experiments/<run>/` convention `research_process.md` describes for
+comparing multiple runs doesn't apply here. The cache and its documentation
+belong together, next to the other data-adjacent artifact (`data/`), not in a
+run-comparison directory.
+
+**How to apply:** if a later E0 rerun needs to compare cache versions (e.g.
+after retuning the plausibility filter), that's the trigger to reconsider
+`experiments/`, not this pass.
+
+---
+
+## 2026-09-19 — Plausibility filter's pass/fail split doesn't gate the human-eyeball overlay sample
+
+**Decided:** `landmarks.parquet` caches every processed row (2742, including
+the one `detection_failed` row and 59 filter-dropped rows), with `plausible`
+and `drop_reasons` columns beyond the backlog's literal 5-column schema.
+`sample_overlays` in `scripts/landmark_cache.py` draws its ~20-image human
+review sample uniformly at random across **all** rows, independent of
+`plausible`.
+
+**Why:** `docs/team/data-steward.md` says "nothing downstream re-runs the
+detector" — dropping failed rows from the cache would force a full
+~2742-image OpenVINO re-run if the filter's thresholds (derived/estimated in
+this same pass) get retuned later. The uniform-random overlay sample is a
+direct user correction during plan review: the filter's pass/fail split is
+for reporting and future refiltering only, not for curating what a human
+looks at.
+
+**Alternative considered:** bucket a separate `rejects/<reason>/` folder so a
+human specifically reviews dropped detections, per the backlog's literal
+"reject-sample review" control. Overridden by the user — a human wanting that
+view can filter the parquet by `plausible == False` themselves; this pass
+doesn't pre-build it.
+
+**How to apply:** this makes the backlog's "reject count + manual sample
+verdict" acceptance criterion lighter than written — the count and per-reason
+breakdown are automated (in `data/cache/README.md`), but the sample a human
+sees during the 20-overlay spot check isn't reject-focused.
+
+---
+
+## 2026-09-19 — Plausibility filter's aspect-ratio bound derived from CatFLW ground truth, not guessed
+
+**Decided:** `ASPECT_RATIO_BOUNDS = (0.5, 1.8)` in `src/catface/ml/plausibility.py`.
+
+**Why:** computed width/height for all 2079 CatFLW ground-truth
+`bounding_boxes`: min 0.763, p1 0.856, p50 1.019, p99 1.291, max 1.436. The
+chosen bound pads that range generously (roughly ±30-40% beyond the observed
+min/max) since CatFLW is curated single-cat portrait photography and the
+Roboflow sets are "in the wild" — tighter bounds risked flagging legitimate
+off-angle photos as implausible.
+
+**Alternative considered:** a round guessed bound like `(0.5, 2.0)`. Rejected
+— CatFLW's own boxes were sitting on disk unused for this purpose; computing
+the real distribution cost one line and removes the guess.
+
+**How to apply:** if E4's yaw-binning work later finds the Roboflow pose
+distribution is wider than CatFLW's, this bound may need widening — check the
+`bad_aspect_ratio` drop count (2 out of 2742 in this run) against that.
+
+---
+
+## 2026-09-19 — Parquet cache path: `data/cache/landmarks.parquet`
+
+**Decided:** the E0 landmark cache lives at `data/cache/landmarks.parquet`,
+documented by `data/cache/README.md`.
+
+**Why:** no literal path is named anywhere in `PLAN_RESEARCH.md`,
+`backlog.md`, or `data-steward.md` — all three say "the path the plan
+specifies" without ever specifying one. `data/cache/` groups it with the
+other data-adjacent artifacts (near-duplicate CSV, distribution plots,
+overlays) rather than filing it as a per-run experiment artifact (see the
+"E0 skips `experiments/`" entry above).
+
+**Alternative considered:** `experiments/e0/landmarks.parquet`. Rejected once
+`experiments/` was ruled out for this pass.
+
+**How to apply:** E1 onward reads from this path; don't introduce a second
+cache location without updating this entry.
+
+---
+
+## 2026-09-19 — `detector_confidence` is a derived geometric-plausibility proxy, not a model output — and it has to use the tight box, not the crop
+
+**Decided:** `plausibility.detector_confidence_proxy` computes the fraction of
+the 48 landmarks that land inside the *tight* localizer box (`box_xyxy`), not
+the margin-expanded crop `detect_landmarks` runs the landmarks model on.
+Documented as a proxy, explicitly not a model confidence score, everywhere it
+appears (code comment, `data/cache/README.md`, this entry).
+
+**Why:** inspecting the compiled OpenVINO models directly —
+`cat_face_localizer` outputs `[1,4]` (box only), `cat_face_landmarks` outputs
+`[1,96]` (48×2 flattened only) — confirmed neither model emits a confidence
+value, even though the backlog's parquet schema names a `detector_confidence`
+column. Something has to fill that column; it can't be a real model score.
+The first version measured the fraction inside the *expanded crop box*
+instead, reusing the same box the "inside box" filter rule checks — that
+turned out to be tautological: `map_points_to_image` scales the landmarks
+model's normalized output directly onto that same crop box, so the fraction
+came out to exactly 1.0 on all 2741 valid rows in the real run, with zero
+variance. Caught by looking at the confidence histogram after the real run —
+a single spike, not a distribution. Switching to the tight box (which is not
+part of the model's own output space) gives a real spread: mean 0.99, min
+0.54, std 0.034 across the same run.
+
+**Alternative considered:** leave the column out entirely, since the backlog
+schema doesn't strictly require inventing a substitute. Rejected — the
+backlog and `data-steward.md` both call for plotting "detector confidence,"
+and a working proxy is more useful than silently dropping the requirement.
+
+**How to apply:** never read this column as if it came from the model. If a
+future model version does emit a real confidence score, that's a new column,
+not a silent redefinition of this one. If a future proxy candidate is checked
+against the same box its own inputs were derived from, check whether it can
+vary at all before trusting the number — this is the second time in this
+session a metric turned out to be tautological by construction (see the
+average-hash entry above, where the failure mode was the opposite: too little
+structure, not too much).
+
+---
+
+## 2026-09-19 — Landmark index groups (eyes, muzzle) verified against 4 CatFLW labels before use in the plausibility filter
+
+**Decided:** `LEFT_EYE = (3,4,5,6,7,36,37,38)`, `RIGHT_EYE =
+(1,8,9,10,11,39,40,41)`, `MUZZLE` = the remaining 22 non-eye, non-ear indices,
+in `src/catface/ml/plausibility.py`. Ear indices (two 5-point groups) aren't
+defined as a constant since nothing in E0 uses them.
+
+**Why:** derived by inspecting one real CatFLW label's raw coordinates and
+clustering by position, cross-checked against `docs/plan-research.md`'s
+stated group sizes ("8 landmarks per eye, 5 per ear, 22 across nose and
+whiskers" — matched exactly), then spot-checked against 3 more random CatFLW
+labels (`mean_y(eye) < mean_y(muzzle) < mean_y(ear)`... in image coordinates,
+`ear < eye < muzzle` — held on all 4 samples). The vendor doesn't publish an
+index-order document; this is the same category of unverified-scheme risk as
+the localizer's raw output order (see the entry below from the previous
+session), so it got the same verify-before-trust treatment.
+
+**Alternative considered:** trust the group sizes from `docs/plan-research.md`
+without checking index order against real coordinates. Rejected — matching
+counts doesn't confirm index assignment; only checking actual (x,y) values
+does.
+
+**How to apply:** if E3's `core/graph.py` needs ear indices for its
+anatomical adjacency, re-derive them the same way (they were found during
+this pass but not committed as unused code) rather than guessing from the
+Finka paper's diagram alone.
+
+---
+
 ## 2026-09-19 — `core/geometry.py` created now, ahead of the app track's M2
 
 **Decided:** `src/catface/core/geometry.py` exists as of this session, with `letterbox_square`, `unletterbox_xyxy`, `expand_box`, `crop_and_resize`, `map_points_to_image` — the two operations (letterbox, crop margin) the Data Steward role doc forbids reimplementing in `ml`. Procrustes is not here yet; that's still E1's job.

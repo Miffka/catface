@@ -6,6 +6,91 @@ human checked or changed before accepting it.
 
 ---
 
+## 2026-09-19 — E0 remainder: licence table, near-duplicate check, plausibility filter, parquet cache
+
+**Asked:** read `docs/backlog.md`, implement the rest of RSCH-0 (E0) —
+everything after the fetch scripts and the single-image detector CLI from the
+two prior sessions. Manual relabeling (the 100-image blind relabel) explicitly
+out of scope. Also: document dataset statistics in a `README.txt` in every
+folder under `data/`. The Roboflow datasets were named `cat-emotions-3` and
+`cat-emotions-5` in the request.
+
+**Tool:** Claude Code, main session, plan mode, `/ponytail full`. Three
+Explore agents in parallel (dataset folder contents, `ml`/`core` code and
+dependencies, research-process docs and prior E0 session logs), then one Plan
+agent to turn the findings into a concrete file-by-file design before writing
+code.
+
+**What it did:** confirmed `cat-emotions-5` doesn't exist on disk (the real
+folder is `cat-emotions-7`, which matches the backlog's own "7 classes"
+description) and confirmed with the user which one to use before touching
+files. Verified the CatFLW landmark index scheme (eye/muzzle groups) against
+4 real labels rather than trusting the vendor's undocumented ordering.
+Inspected the two OpenVINO models directly and found neither emits a
+confidence score, despite the backlog's parquet schema naming a
+`detector_confidence` column — built a documented geometric proxy instead.
+Wrote `src/catface/ml/plausibility.py` (filter + proxy, unit-tested),
+`scripts/dedupe.py` (near-duplicate hashing), `scripts/dataset_stats.py`
+(licence table, actual-vs-advertised counts, README.txt generation), and
+`scripts/landmark_cache.py` (batch detector run + parquet cache). Ran both
+scripts for real against the full datasets — not a dry run.
+
+**Checked by human:** plan reviewed and corrected once before implementation
+started (see below). `landmark_cache.py` was moved from `src/catface/ml/` to
+`scripts/` mid-implementation on direct instruction, since it's a run-once
+script like the other two, not reusable package logic.
+
+**What it caught:** an average-hash near-duplicate implementation initially
+reported 126 candidate matches between the two Roboflow sets, including one
+at Hamming distance 0 ("exact match"). Visually checking that pair showed two
+completely unrelated cats — the hash was coincidentally collapsing different
+photos to the same rough light/dark pattern. Switched to a difference hash
+(dHash), re-verified against the same pair (clearly distinct under dHash),
+and reran the full comparison: zero near-duplicates found. The real batch run
+crashed on image 1153 of 2071 — a degenerate localizer box produced a
+zero-size crop and `cv2.resize` raised. Fixed by catching it per-image and
+recording a `detection_failed` row instead of losing the whole run. The first
+`detector_confidence` proxy measured landmarks against the same expanded crop
+box the landmarks model's output is normalized onto — tautologically 1.0 on
+all 2741 valid rows, caught by looking at the confidence histogram after a
+real run and seeing a single spike instead of a distribution. Switched to
+measuring against the tight (unexpanded) localizer box instead, which isn't
+part of the model's own output space and gave a real spread (mean 0.99, min
+0.54). Rerunning the pipeline twice for these fixes also exposed that
+`append_section` was a plain file-append, not idempotent — it left two
+"## Detector run (E0)" sections in the same `README.txt` after the second
+run; fixed to replace a same-named section instead. All four are written up
+in `docs/DECISIONS.md`, along with the CatFLW ground-truth aspect-ratio
+bounds and eye/muzzle index groups, both verified against real data rather
+than trusted from `docs/plan-research.md`'s prose description alone.
+
+**Plan corrections from the user, before implementation:** cache every
+detector prediction regardless of plausibility, but don't let the pass/fail
+split decide which images go into the human-eyeball overlay sample (uniform
+random instead); skip `experiments/` entirely — this isn't a multi-run tuning
+experiment, so outputs live under `data/cache/` next to the cache itself, with
+a `README.md` documenting it; no `test_dedupe.py`; `dedupe.py` and
+`dataset_stats.py` (and later `landmark_cache.py`) belong in `scripts/`, not
+`catface.ml`, since none of them are reusable package logic.
+
+**Verified:** `uv run pytest tests/test_plausibility.py tests/test_geometry.py`
+(9 passed). `uv run python scripts/dataset_stats.py` against the real
+datasets — inspected the three generated `README.txt` files by hand.
+`uv run python scripts/landmark_cache.py` against the real datasets (2742
+images, ~2.5 minutes on CPU) — 2682 plausible (97.8%), stop condition NOT
+triggered. Opened several `data/cache/overlays/*.jpg` by hand: box and
+landmarks land correctly on ears, eyes, nose, and muzzle on every one checked.
+Confirmed via `git add --dry-run data/` that the `.gitignore` ladder stages
+exactly the four `README` files and nothing else under `data/`.
+
+**Not yet done:** the human parts of E0 — actually looking at the 20 sampled
+overlays and giving a verdict, and the 100-image blind relabel (explicitly
+out of scope for this pass). `data/cache/README.md` calls out both as open
+TODOs. Research QA review and closing the RSCH-0 issue belong to the
+orchestrator and the Research PM.
+
+---
+
 ## 2026-09-19 — E0 detector inference: single-image CLI, box + landmarks overlay
 
 **Asked:** implement inference for the `hugocornellier/cat-face-landmarks` detector already fetched to `models/` — a script with functions and an `if __name__ == "__main__"` entry point that takes an input image and an output path, validates the input, preprocesses per the HF model card, runs both stages, and writes an overlay image with the box and 48 landmarks drawn on it.
