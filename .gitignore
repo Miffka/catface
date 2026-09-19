@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.env
 
 # weights are fetched, not committed; the manifest is the contract
 models/*
