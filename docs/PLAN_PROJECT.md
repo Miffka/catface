@@ -272,11 +272,21 @@ limit predict and edit per IP — on a 1 GiB box this is a resource control as m
 a security one. CORS to the deploy origin. Non-root container. Secrets from env,
 `.env.example` has placeholders. Scanning in CI.
 
+None of this is its own milestone, which is how security work goes unbuilt. Where
+each piece lands: non-root container and CI scanning in **M0**; upload validation
+(content-type allowlist, magic bytes, size cap during streaming, dimension cap,
+Pillow decode-bomb limits, uuid filenames) in **M1**, with the bad-upload tests the
+test section already lists; CORS, secrets from env, and the per-IP rate limit in
+**M6** when a real origin exists. Check them off against the rubric in M8.
+
 ## Milestones
 
 Each ends green and tagged.
 
-- **M0** skeleton: uv init, layout, lint + one test in CI, Dockerfile builds
+- **M0** skeleton: **rubric first** — read the course rubric, write the scored
+  items and their weights into `docs/DECISIONS.md`, and order everything below by
+  weight. Then uv init, layout, lint + one test in CI, `api`-never-imports-`ml`
+  grep test, Dockerfile builds.
 - **M1** contract first: all schemas and routes against `StubEngine`, db + first
   migration, integration tests, OpenAPI snapshot. Whole API works with a fake model.
 - **M2** real landmarks: fetch_weights, manifest, OpenVINOEngine, tflite load
@@ -294,12 +304,16 @@ Each ends green and tagged.
   Prefer a fixed-price VPS over AWS free tier — new AWS accounts run on credits that
   expire and then close the account, which kills the demo before review. If AWS,
   x86 not Graviton, since OpenVINO targets Intel.
-- **M6.5** load: swap file, memory limits, tuned Postgres, bounded semaphore and
-  queue, `bench/load.py`. Tune streams, record the table, fix whatever the test
-  breaks. Do this before observability, since the load test tells you which metrics
-  are worth having.
-- **M7** observability + agents
-- **M8** docs, screenshots, self-score against the rubric, fix the worst gaps
+- **M6.5** load: swap file, memory limits, tuned Postgres, bounded semaphore,
+  `bench/load.py`, retention job deleting stored images older than N days. Tune
+  streams, record the table, fix whatever the test breaks. Do this before
+  observability, since the load test tells you which metrics are worth having.
+- **M7** observability + agents. The disk-above-80% alert pairs with M6.5's
+  retention job — the job is what makes the alert actionable.
+- **M8** docs, screenshots, self-score against the rubric, fix the worst gaps.
+  The five graded docs, each its own file: spec, architecture, setup, tests,
+  deployment. `AI_WORKFLOW.md` and `DECISIONS.md` were written as I went and are
+  not part of this milestone.
 
 ## Fallbacks
 

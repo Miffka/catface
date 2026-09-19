@@ -141,6 +141,11 @@ head. About 40 lines.
 crash on `ScatterElements`). On a fixed 48-node graph the dense form is identical
 maths and exports to plain matmuls.
 
+**Export the untrained model before training it.** Thirty minutes, and it tests the
+assumption the whole architecture choice rests on. Finding an export problem here
+means changing the architecture; finding it at export time, after E5, means
+retraining with a deadline overhead.
+
 Adjacency hand-written from anatomy in `core/graph.py`: eyelid contours as rings,
 ear base to ear tip, whisker pads to nose, nose to mouth, eyes to ear bases.
 Normalise `D^-1/2 (A+I) D^-1/2`. Node features: aligned `(x,y)` plus offset from the
@@ -189,11 +194,8 @@ flattening involves, and it will smear fur and leave holes.
 PyTorch within 1e-5, then `ov.convert_model` and check again. Benchmark p50/p95 and
 peak RSS on the deploy CPU. Write the manifest entry with sha256 and metrics.
 
-A script, not notebook cells. Runs in CI on every model change.
-
-Optional once the app works: a `bench/` C++ CLI on the OpenVINO C++ API with a table
-comparing cold start, warm latency, and RSS against both Python runtimes. It's a
-measurement, not a component.
+A script, not notebook cells. Runs in CI on every model change. E3 has already run
+the export path once on an untrained model, so this should hold no surprises.
 
 ## Report
 
