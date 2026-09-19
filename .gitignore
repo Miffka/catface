@@ -30,6 +30,7 @@ data/catflw/CatFLW dataset/*
 !data/cache/
 data/cache/*
 !data/cache/README.md
+!data/cache/splits.csv
 !data/cache/overlays/
 data/cache/overlays/*
 !data/cache/overlays/overlay.csv

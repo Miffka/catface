@@ -1,0 +1,10 @@
+{
+  "seed": 0,
+  "n_splits": 5,
+  "classes": [
+    "attentive",
+    "relaxed",
+    "uncomfortable"
+  ],
+  "git_sha": "a2aab315fe0070d3a2f1286c5363e209c0839250"
+}

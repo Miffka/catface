@@ -2,10 +2,13 @@ import numpy as np
 
 from catface.core.geometry import (
     crop_and_resize,
+    ear_angle,
     expand_box,
+    eye_aspect_ratio,
     generalized_procrustes,
     letterbox_square,
     map_points_to_image,
+    muzzle_spread_ratio,
     procrustes_align,
     unletterbox_xyxy,
 )
@@ -133,3 +136,54 @@ def test_generalized_procrustes_mean_is_fixed_point():
     realigned = np.stack([procrustes_align(shape, mean_shape) for shape in shapes])
     new_mean = _center_scale(realigned.mean(axis=0))
     assert np.linalg.norm(new_mean - mean_shape) < 1e-6
+
+
+# Three points: corners 4 apart on the x-axis, one point 1 above their
+# midpoint -- corner-to-corner (horizontal) = 4, perpendicular (vertical) = 1.
+_EYE_SHAPE = np.array([[0.0, 0.0], [4.0, 0.0], [2.0, 1.0]])
+_EYE_INDICES = (0, 1, 2)
+
+
+def test_eye_aspect_ratio_known_rectangle():
+    ratio = eye_aspect_ratio(_EYE_SHAPE, _EYE_INDICES)
+    assert np.isclose(ratio, 0.25)
+
+
+def test_eye_aspect_ratio_index_order_invariant():
+    # Corner-to-corner is found by max pairwise distance, not index order,
+    # so shuffling the eye's point order must not change the ratio.
+    shuffled = _EYE_SHAPE[[2, 0, 1]]
+    ratio = eye_aspect_ratio(shuffled, (0, 1, 2))
+    assert np.isclose(ratio, 0.25)
+
+
+# Ear base at the eye-center midpoint, tip straight "up" (0, 2): the ear
+# vector is perpendicular to a horizontal inter-ocular axis, so the angle
+# is exactly 90 degrees.
+_EAR_SHAPE = np.array([[0.0, 0.0], [0.0, 2.0]])
+_EAR_INDICES = (0, 1)
+_LEFT_EYE_CENTER = np.array([-1.0, 0.0])
+_RIGHT_EYE_CENTER = np.array([1.0, 0.0])
+
+
+def test_ear_angle_perpendicular_to_ocular_axis():
+    angle = ear_angle(_EAR_SHAPE, _EAR_INDICES, _LEFT_EYE_CENTER, _RIGHT_EYE_CENTER)
+    assert np.isclose(angle, 90.0)
+
+
+def test_ear_angle_aligned_with_ocular_axis_is_zero():
+    ear_shape = np.array([[0.0, 0.0], [2.0, 0.0]])  # base at midpoint, tip along +x
+    angle = ear_angle(ear_shape, _EAR_INDICES, _LEFT_EYE_CENTER, _RIGHT_EYE_CENTER)
+    assert np.isclose(angle, 0.0)
+
+
+# Muzzle points 3 apart; inter-ocular distance 2 -> ratio 1.5.
+_MUZZLE_SHAPE = np.array([[0.0, 0.0], [3.0, 0.0]])
+_MUZZLE_INDICES = (0, 1)
+
+
+def test_muzzle_spread_ratio_known_values():
+    ratio = muzzle_spread_ratio(
+        _MUZZLE_SHAPE, _MUZZLE_INDICES, _LEFT_EYE_CENTER, _RIGHT_EYE_CENTER
+    )
+    assert np.isclose(ratio, 1.5)

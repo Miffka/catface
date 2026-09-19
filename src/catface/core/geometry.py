@@ -1,5 +1,9 @@
 """Letterbox and crop-margin math shared by both tracks, plus Procrustes
-alignment (E1)."""
+alignment (E1) and derived-geometry readouts (E2: eye aspect ratio, ear
+angle, muzzle spread) used both as model features and as app-side
+readouts."""
+
+from collections.abc import Sequence
 
 import cv2
 import numpy as np
@@ -122,3 +126,57 @@ def generalized_procrustes(
 
     aligned = np.stack([procrustes_align(shape, reference) for shape in shapes])
     return aligned, reference
+
+
+def eye_aspect_ratio(shape: np.ndarray, eye_indices: Sequence[int]) -> float:
+    """Eyelid opening / corner-to-corner span. The horizontal axis is the
+    pair of eye points farthest apart (robust to point ordering); the
+    vertical distance is the largest perpendicular offset of the remaining
+    points from that line."""
+    points = shape[list(eye_indices)]
+    dists = np.linalg.norm(points[:, None, :] - points[None, :, :], axis=-1)
+    i, j = np.unravel_index(np.argmax(dists), dists.shape)
+    horizontal = dists[i, j]
+    axis = points[j] - points[i]
+    normal = np.array([-axis[1], axis[0]]) / horizontal
+    vertical = np.abs((points - points[i]) @ normal).max()
+    return float(vertical / horizontal)
+
+
+def ear_angle(
+    shape: np.ndarray,
+    ear_indices: Sequence[int],
+    left_eye_center: np.ndarray,
+    right_eye_center: np.ndarray,
+) -> float:
+    """Signed angle in degrees, base->tip vector vs the inter-ocular axis,
+    via atan2 of each vector's heading (positive = counter-clockwise from
+    the inter-ocular axis). Base/tip are the ear points nearest/farthest
+    from the eye-center midpoint."""
+    points = shape[list(ear_indices)]
+    midpoint = (np.asarray(left_eye_center) + np.asarray(right_eye_center)) / 2
+    dists_to_mid = np.linalg.norm(points - midpoint, axis=1)
+    base, tip = points[np.argmin(dists_to_mid)], points[np.argmax(dists_to_mid)]
+    ear_vec = tip - base
+    ocular_axis = np.asarray(right_eye_center) - np.asarray(left_eye_center)
+    angle = np.degrees(
+        np.arctan2(ear_vec[1], ear_vec[0]) - np.arctan2(ocular_axis[1], ocular_axis[0])
+    )
+    return float((angle + 180) % 360 - 180)
+
+
+def muzzle_spread_ratio(
+    shape: np.ndarray,
+    muzzle_indices: Sequence[int],
+    left_eye_center: np.ndarray,
+    right_eye_center: np.ndarray,
+) -> float:
+    """Geometry-only stand-in for whisker-pad spread: max pairwise distance
+    among the muzzle points, divided by inter-ocular distance. Not a named
+    whisker-pad index pair (no anatomical index map is published for these
+    points) and NOT a validated "tension" measure — see docs/backlog.md
+    RSCH-2 grooming notes."""
+    points = shape[list(muzzle_indices)]
+    spread = np.linalg.norm(points[:, None, :] - points[None, :, :], axis=-1).max()
+    ocular_dist = np.linalg.norm(np.asarray(right_eye_center) - np.asarray(left_eye_center))
+    return float(spread / ocular_dist)
