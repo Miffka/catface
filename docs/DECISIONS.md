@@ -6,6 +6,54 @@ was. Newest on top.
 
 ---
 
+## 2026-09-19 — `.gitignore`'s blanket `experiments/` line removed
+
+**Decided:** `.gitignore` no longer ignores `experiments/` wholesale. `experiments/e1/` (README, `plots/`) commits normally, and so will every later `experiments/<run>/` directory.
+
+**Why:** the blanket line was already in tension with `docs/team/ml-engineer.md`'s own stated convention — "Commit regularly, one directory per run under `experiments/<run>/`... every run, not just the ones that worked" — but the conflict stayed latent because E0 deliberately skipped `experiments/` entirely (see the "E0 skips `experiments/`" entry below) and nothing had tried to commit there yet. E1 is the first run to actually write to `experiments/e1/`, so leaving the blanket ignore in place would have silently dropped the run directory the role doc requires committing.
+
+**Alternative considered:** add a narrower `!experiments/e1/` exception per run, mirroring the `models/*` / `!models/manifest.json` pattern used elsewhere in this file. Rejected — the role doc wants every run committed, not an allowlist maintained by hand on each new experiment; removing the blanket line once does the same job without a recurring edit.
+
+**How to apply:** don't re-add a blanket `experiments/` ignore. If a specific run produces something genuinely too large or generated-on-demand to commit (e.g. a cached model checkpoint), ignore that one path under `experiments/<run>/`, not the whole tree.
+
+---
+
+## 2026-09-19 — `models/class_means.json` covers only the three usable cat-emotions-3 classes
+
+**Decided:** `scripts/shape_space.py` writes `models/class_means.json` with exactly three top-level keys — `attentive` (1130), `relaxed` (730), `uncomfortable` (107) — computed as the per-class mean of the shared Procrustes-aligned array (2029 plausible cat-emotions-3 rows total) the E1 PCA also runs on.
+
+**Why:** cat-emotions-3's raw download has 8 label folders, but the other five — `no clear emotion recognizable` (34 plausible), `sad` (22), `angry` (3), `Unlabeled` (2), `attentive uncomfortable` (1) — are single/low-double-digit counts, too small to support a stable mean shape, and at least two of them (`Unlabeled`, `attentive uncomfortable`) aren't real expression labels at all. RSCH-4's method in `docs/backlog.md` already treats only these three as real classes for the same reason; E1 follows that scoping rather than inventing its own.
+
+**Alternative considered:** emit all 8 folders and let the app's warper ignore the tiny ones at request time. Rejected — a mean of 1-3 points is not a meaningful "class shape," and shipping it would imply a confidence the data doesn't support; better to not offer those targets at all than offer a noisy one.
+
+**How to apply:** if a later experiment (E2 onward) changes which classes are "usable" (e.g. a merge decision at E4), `class_means.json` needs regenerating from `scripts/shape_space.py`, not hand-edited — the app's `/edit` endpoint reads this file directly as its delta source.
+
+---
+
+## 2026-09-19 — Ear landmark indices verified and promoted to public `LEFT_EAR`/`RIGHT_EAR`
+
+**Decided:** `src/catface/ml/plausibility.py` now defines `LEFT_EAR = (22, 23, 24, 25, 26)` and `RIGHT_EAR = (27, 28, 29, 30, 31)` as public constants (`EAR = LEFT_EAR + RIGHT_EAR` kept for `MUZZLE`'s existing by-exclusion derivation).
+
+**Why:** the previous `_EAR = (22,...,31)` was a private placeholder — per the "Landmark index groups... verified against 4 CatFLW ground-truth labels" entry below, ear indices were carried as one undifferentiated 10-tuple because nothing in E0 used the left/right split. E1's pose-confound proxies in `scripts/shape_space.py` need the split for real (`ear_position` needs `mean_y(EAR)` only, but a future consumer wanting per-side ear angle needs the split, and grouping them wrong would silently corrupt that). Verified the same way the original eye groups were: loaded 4 real CatFLW label JSONs (`data/catflw/CatFLW dataset/labels/*.json`), inspected raw (x,y) for indices 22-31 against each label's `LEFT_EYE`/`RIGHT_EYE` mean x. In all 4 samples, indices 22-26 had x-coordinates clustered on the same side as `LEFT_EYE`'s mean x (e.g. one sample: `LEFT_EYE` mean x 225.2, indices 22-26 at x 204-228; `RIGHT_EYE` mean x 257.9, indices 27-31 at x 254-285) — a contiguous 5-and-5 split by index, unlike the eyes' interleaved indices.
+
+**Alternative considered:** assume a 5-and-5 split without checking whether it's contiguous in index order, since the eye groups weren't. Rejected — `docs/PLAN_RESEARCH.md` only guarantees the count (5 per ear), not the order, and the whole point of the earlier eye verification was that matching counts doesn't confirm index assignment; only real coordinates do.
+
+**How to apply:** any future consumer needing per-side ear features (e.g. E3's `core/graph.py` anatomical adjacency) can import `LEFT_EAR`/`RIGHT_EAR` directly instead of re-deriving them.
+
+---
+
+## 2026-09-19 — Generalized Procrustes is rotation-only; reflections forbidden by construction
+
+**Decided:** `procrustes_align` in `src/catface/core/geometry.py` centers and scales `shape` and `reference` independently, then fits a rotation via SVD (`U, S, Vt = svd(shape_centered.T @ reference_centered)`, `R = U @ Vt`). If `det(R) < 0` — the fit would be an improper rotation (a reflection) — the sign of `U`'s last column is flipped and `R` recomputed before applying it. `generalized_procrustes` (iterative GPA, `core/geometry.py`) builds on this same primitive for every pairwise alignment.
+
+**Why:** the 48 landmarks are labeled and anatomically chiral — `LEFT_EYE`/`RIGHT_EYE` (and now `LEFT_EAR`/`RIGHT_EAR`) in `src/catface/ml/plausibility.py` are specific, distinct indices, not an unordered point cloud. An unconstrained Kabsch fit is free to pick the reflection solution whenever it fits at least as well as any proper rotation — verified concretely in `tests/test_geometry.py::test_procrustes_align_forbids_reflection`: for a genuinely mirrored, asymmetric point set, the unconstrained SVD fit lands exactly on the reference (residual ~1e-16) using an improper (`det < 0`) rotation, while the sign-flip-corrected fit refuses that solution (residual two orders of magnitude larger, `det > 0` recovered). Silently accepting that mirror solution during GPA would swap left/right in the shared aligned frame that `models/class_means.json` and every downstream PC/proxy computation reads from — not a cosmetic bug, a correctness one.
+
+**Alternative considered:** run unconstrained Procrustes and rely on cat faces being roughly bilaterally symmetric so the reflection case "shouldn't" come up in practice. Rejected — bilateral near-symmetry is exactly the condition under which noise can tip an unconstrained SVD fit toward the improper solution, and there's no cheap way to detect after the fact that it happened; forbidding it at the source costs one `if` statement.
+
+**How to apply:** any new pairwise shape alignment added later (E3's node features, e.g.) should go through `procrustes_align`/`generalized_procrustes` rather than a fresh `np.linalg.svd` call, so this guard isn't silently reintroduced as a gap.
+
+---
+
 ## 2026-09-19 — cat-emotions-7 is out of the research training set
 
 **Decided:** E1 onward read the E0 cache with `dataset == "cat-emotions-3"` only. The 671 cat-emotions-7 rows stay in `data/cache/landmarks.parquet` (already computed, nothing to gain by deleting them) and its per-dataset README keeps its detector-run section for the record.
