@@ -6,11 +6,10 @@ __pycache__/
 .mypy_cache/
 .env
 
-# weights are fetched, not committed; the manifest is the contract
+# weights are fetched, not committed; the manifest and the E1 class means are
 models/*
 !models/manifest.json
-
-experiments/
+!models/class_means.json
 
 # data is fetched, not committed; each dataset's README is the contract
 data/*
