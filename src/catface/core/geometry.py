@@ -1,6 +1,5 @@
-"""Letterbox and crop-margin math shared by both tracks. Procrustes lands
-here too, at E1 — not needed yet.
-"""
+"""Letterbox and crop-margin math shared by both tracks, plus Procrustes
+alignment (E1)."""
 
 import cv2
 import numpy as np
@@ -69,3 +68,57 @@ def map_points_to_image(points_norm: np.ndarray, box_xyxy: tuple[int, int, int, 
     points[:, 0] = points[:, 0] * (x2 - x1) + x1
     points[:, 1] = points[:, 1] * (y2 - y1) + y1
     return points
+
+
+def _center_scale(shape: np.ndarray) -> np.ndarray:
+    """Subtract the centroid, divide by Frobenius norm."""
+    centered = shape - shape.mean(axis=0)
+    return centered / np.linalg.norm(centered)
+
+
+def procrustes_align(shape: np.ndarray, reference: np.ndarray) -> np.ndarray:
+    """Rotate `shape` onto `reference`'s normalized frame (Kabsch/SVD),
+    after independently centering and scaling both. Rotation-only:
+    reflections are forbidden by flipping the sign of U's last column when
+    the fitted rotation would otherwise have a negative determinant.
+
+    This matters because landmarks here are labeled and anatomically
+    chiral (left eye vs right eye are distinct indices, not an unordered
+    point cloud — see LEFT_EYE/RIGHT_EYE in catface.ml.plausibility). An
+    unconstrained Procrustes fit can silently pick a mirror-image solution
+    that swaps left and right.
+    """
+    shape_n = _center_scale(shape)
+    reference_n = _center_scale(reference)
+    U, _, Vt = np.linalg.svd(shape_n.T @ reference_n)
+    R = U @ Vt
+    if np.linalg.det(R) < 0:
+        U = U.copy()
+        U[:, -1] *= -1
+        R = U @ Vt
+    return shape_n @ R
+
+
+def generalized_procrustes(
+    shapes: np.ndarray, tol: float = 1e-6, max_iter: int = 50
+) -> tuple[np.ndarray, np.ndarray]:
+    """Iterative Generalized Procrustes Analysis over `shapes` (M,48,2).
+
+    Seeds the reference with the first (centered+scaled) shape, repeatedly
+    aligns every shape to the current reference and recenters/rescales the
+    mean of the aligned shapes into a new reference, until the reference
+    stops moving (by `tol`) or `max_iter` is reached. Returns the shapes
+    given one final alignment pass to the converged reference, plus that
+    reference as the mean shape.
+    """
+    reference = _center_scale(shapes[0])
+    for _ in range(max_iter):
+        aligned = np.stack([procrustes_align(shape, reference) for shape in shapes])
+        new_reference = _center_scale(aligned.mean(axis=0))
+        converged = np.linalg.norm(new_reference - reference) < tol
+        reference = new_reference
+        if converged:
+            break
+
+    aligned = np.stack([procrustes_align(shape, reference) for shape in shapes])
+    return aligned, reference

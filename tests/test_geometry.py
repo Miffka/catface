@@ -3,8 +3,10 @@ import numpy as np
 from catface.core.geometry import (
     crop_and_resize,
     expand_box,
+    generalized_procrustes,
     letterbox_square,
     map_points_to_image,
+    procrustes_align,
     unletterbox_xyxy,
 )
 
@@ -45,3 +47,89 @@ def test_map_points_to_image_round_trip():
     mapped = map_points_to_image(points_norm, box)
     expected = np.array([[20.0, 30.0], [70.0, 130.0], [120.0, 230.0]])
     assert np.allclose(mapped, expected)
+
+
+def _center_scale(shape):
+    centered = shape - shape.mean(axis=0)
+    return centered / np.linalg.norm(centered)
+
+
+# A scalene, non-symmetric point set (not a regular/symmetric polygon) so a
+# reflection is never confusable with some rotation of the same shape.
+_SCALENE_SHAPE = np.array(
+    [
+        [0.0, 0.0],
+        [3.0, 0.2],
+        [1.0, 2.0],
+        [4.0, 3.0],
+        [-1.0, 1.5],
+        [2.0, -1.0],
+    ]
+)
+
+
+def test_procrustes_align_self_is_noop():
+    aligned = procrustes_align(_SCALENE_SHAPE, _SCALENE_SHAPE)
+    assert np.allclose(aligned, _center_scale(_SCALENE_SHAPE))
+
+
+def test_procrustes_align_recovers_original_after_similarity_transform():
+    theta = np.radians(37)
+    rot = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+    transformed = (_SCALENE_SHAPE @ rot.T) * 2.5 + np.array([10.0, -4.0])
+
+    aligned = procrustes_align(transformed, _SCALENE_SHAPE)
+    assert np.allclose(aligned, _center_scale(_SCALENE_SHAPE), atol=1e-8)
+
+
+def test_procrustes_align_forbids_reflection():
+    reflected = _SCALENE_SHAPE.copy()
+    reflected[:, 0] *= -1  # mirror across the y-axis
+
+    reference_n = _center_scale(_SCALENE_SHAPE)
+    shape_n = _center_scale(reflected)
+
+    # An unconstrained (reflection-allowed) Kabsch fit finds the exact mirror
+    # transform and matches the reference perfectly -- that's the "silently
+    # accept the mirror solution" trap this function must avoid.
+    U, _, Vt = np.linalg.svd(shape_n.T @ reference_n)
+    naive_R = U @ Vt
+    assert np.linalg.det(naive_R) < 0  # this pair genuinely needs a reflection
+    assert np.allclose(shape_n @ naive_R, reference_n, atol=1e-8)
+
+    # procrustes_align forbids that: since no pure rotation can undo a
+    # reflection of an asymmetric shape, it does not land on the reference,
+    # proving it rejected the mirror shortcut rather than silently taking it.
+    aligned = procrustes_align(reflected, _SCALENE_SHAPE)
+    assert not np.allclose(aligned, reference_n, atol=1e-2)
+
+    # And the rotation it actually applied is a proper rotation (det > 0),
+    # recovered by solving aligned = shape_n @ R for R.
+    recovered_R, *_ = np.linalg.lstsq(shape_n, aligned, rcond=None)
+    assert np.linalg.det(recovered_R) > 0
+
+
+def test_generalized_procrustes_mean_is_fixed_point():
+    rng = np.random.default_rng(0)
+    shapes = []
+    for i in range(6):
+        theta = np.radians(15 * i + 5)
+        rot = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+        noise = rng.normal(scale=0.05, size=_SCALENE_SHAPE.shape)
+        shape = (_SCALENE_SHAPE + noise) @ rot.T * (1.0 + 0.1 * i) + np.array([i, -i])
+        shapes.append(shape)
+    shapes = np.stack(shapes)
+
+    aligned, mean_shape = generalized_procrustes(shapes)
+    assert aligned.shape == shapes.shape
+    assert mean_shape.shape == _SCALENE_SHAPE.shape
+
+    # The mean shape is a fixed point of procrustes_align.
+    self_aligned = procrustes_align(mean_shape, mean_shape)
+    assert np.allclose(self_aligned, mean_shape, atol=1e-8)
+
+    # Re-running one more alignment pass of all shapes to the returned mean
+    # doesn't move the mean further (within tol).
+    realigned = np.stack([procrustes_align(shape, mean_shape) for shape in shapes])
+    new_mean = _center_scale(realigned.mean(axis=0))
+    assert np.linalg.norm(new_mean - mean_shape) < 1e-6
