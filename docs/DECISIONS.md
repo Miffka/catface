@@ -6,6 +6,40 @@ was. Newest on top.
 
 ---
 
+## 2026-09-19 — `core/geometry.py` created now, ahead of the app track's M2
+
+**Decided:** `src/catface/core/geometry.py` exists as of this session, with `letterbox_square`, `unletterbox_xyxy`, `expand_box`, `crop_and_resize`, `map_points_to_image` — the two operations (letterbox, crop margin) the Data Steward role doc forbids reimplementing in `ml`. Procrustes is not here yet; that's still E1's job.
+
+**Why:** `src/catface/ml/detect_landmarks.py` (this session's other deliverable) cannot run the two-stage detector without letterboxing for the localizer and a margin-expanded crop for the landmarks stage — the HF model card requires both. PLAN_PROJECT.md assigns `core/geometry.py` to the app track's M2, but M2 hasn't started, and research can't wait for a milestone on a track that hasn't begun without stalling RSCH-0 entirely.
+
+**Alternative considered:** write the letterbox/crop math inline in the `ml` script, flagged as temporary. Rejected — it's the exact duplication AGENTS.md and the Data Steward doc call out as the failure mode, and the app track's live inference path (per PLAN_PROJECT.md's pipeline note) needs the identical math, not a second copy that can drift.
+
+**How to apply:** when the app track picks up M2, it extends this file (adds Procrustes, anything else M2 needs) rather than starting a new one. `PLAN_PROJECT.md`'s M2 scope shrinks by exactly these two functions.
+
+---
+
+## 2026-09-19 — Cat-face localizer's raw output order is `[x2, y1, x1, y2]`, not `xyxy`
+
+**Decided:** `detect_face_box` in `src/catface/ml/detect_landmarks.py` reads the localizer's `[1,4]` output as `(output[2], output[1], output[0], output[3])` to get `xyxy`, not `output[:4]` directly.
+
+**Why:** the HF model card states the output is `bbox_xyxy` with no index-order detail. Reading it in the stated order puts `x1 > x2` on every real image. Checked against CatFLW's ground-truth box for a sample image (`124, 59, 338, 241`): the raw output pixel-mapped to `(332, 56, 119, 237)` in `(x1,y1,x2,y2)` reading order, and `(119, 56, 332, 237)` reading indices `(2,1,0,3)` — the second is within a few pixels of ground truth, the first is inverted. No other permutation matched.
+
+**How to apply:** if the landmarks model (or any future model from this same HF repo) shows a similarly inverted-looking output, check index order against a labelled sample before assuming the card's stated format applies literally — this vendor's model card doesn't match its own tensor layout at least once already.
+
+---
+
+## 2026-09-19 — `openvino` reads the `.tflite` detector pair directly, no `tensorflow`/`onnxruntime` added
+
+**Decided:** `src/catface/ml/detect_landmarks.py` loads both `.tflite` files via `ov.Core().read_model(path)` + `compile_model(..., "CPU")`. No new dependency.
+
+**Why:** `openvino` (already a runtime dependency, pinned to `2026.4.0` in `uv.lock`) has read `.tflite` natively since well before this version. PLAN_PROJECT.md already named this as the intended path ("OpenVINO reads `.tflite` directly... if a custom op blocks it, swap in ONNX Runtime") but hadn't verified it; this session is that verification, and it works without hitting an unsupported op.
+
+**Alternative considered:** the HF model card's own sample snippet uses `tf.lite.Interpreter` (i.e. `tensorflow`). Rejected — a full `tensorflow` dependency for two inference calls when an already-installed engine reads the same file is the dependency AGENTS.md's "don't add one without asking" rule exists to head off.
+
+**How to apply:** RSCH-6's export step can build on this confirmation — OpenVINO's `.tflite` frontend is now known-good on this exact model family, not just assumed.
+
+---
+
 ## 2026-09-19 — `models/manifest.json` holds the detector pair now; RSCH-6 appends `expression_head`, doesn't replace the file
 
 **Decided:** `models/manifest.json` is committed today with two entries, `cat_face_localizer` and `cat_face_landmarks` (the CatFLW-trained HF detector pair `fetch_weights.py` downloads), in the exact shape RSCH-6 already specifies for its own entry: name, file, sha256, source, licence, input shape, metrics.

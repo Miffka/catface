@@ -6,6 +6,24 @@ human checked or changed before accepting it.
 
 ---
 
+## 2026-09-19 — E0 detector inference: single-image CLI, box + landmarks overlay
+
+**Asked:** implement inference for the `hugocornellier/cat-face-landmarks` detector already fetched to `models/` — a script with functions and an `if __name__ == "__main__"` entry point that takes an input image and an output path, validates the input, preprocesses per the HF model card, runs both stages, and writes an overlay image with the box and 48 landmarks drawn on it.
+
+**Tool:** Claude Code, main session, plan mode, `/ponytail full`. Two Explore agents in parallel (one on `data/`/`models/` contents and the E0 process docs, one on the `ml`/`core` code structure and dependencies) — the scope touched several unrelated parts of the repo at once (data layout, model manifest, process docs, dependency list), which is what parallel exploration is for.
+
+**What it did:** fetched the HF model card directly (WebFetch) rather than guessing preprocessing — it specifies letterbox-to-224 for the localizer, a 0.1-margin crop-and-resize-to-384 for the landmarks stage, and float32 `[0,1]` inputs for both. Asked the user one clarifying question (inline vs. real `core/geometry.py` for the letterbox/crop-margin math the Data Steward doc forbids duplicating) before writing code. Created `src/catface/core/geometry.py` (letterbox, unletterbox, expand-and-crop, point-mapping — round-trip tested in `tests/test_geometry.py`) and `src/catface/ml/detect_landmarks.py`. Loads both `.tflite` files via `openvino` (already a dependency) rather than adding `tensorflow`, matching PLAN_PROJECT.md's stated intent.
+
+**Checked by human:** none yet — first pass, run and eyeballed by the same session, pending review.
+
+**What it caught:** the localizer's real output tensor order doesn't match the model card's stated `bbox_xyxy` — reading it in the stated order inverts `x1`/`x2` on every image. Found by checking the raw output against CatFLW's own ground-truth box for a sample image and trying index permutations until one landed within a few pixels of ground truth. Written up in `DECISIONS.md`; the landmarks model's output order wasn't independently re-verified against ground truth beyond the visual overlay check below, since CatFLW's landmark ordering convention wasn't cross-checked point-by-point.
+
+**Verified:** `uv run pytest tests/test_geometry.py` (4 round-trip checks). Ran the script against a CatFLW image with a known ground-truth box/landmarks and inspected the overlay directly — box and all 48 points land correctly on the ears, eyes, nose, and muzzle. Ran again against a `cat-emotions-3` image (the actual target distribution) and checked the output programmatically (box in-bounds, near-square aspect, overlay pixel diff sane) since that image has no ground truth to compare against.
+
+**Not yet done:** the parquet cache, batch run over both Roboflow sets, near-duplicate hashing, the plausibility filter, the 100-image blind relabel — the rest of RSCH-0. This session's script is the building block those steps will call in a loop.
+
+---
+
 ## 2026-09-19 — E0 download scripts: data → `data/`, weights → `models/`
 
 **Asked:** read `docs/backlog.md`, implement the E0 part — write scripts that download the data into `data/` and the models into `models/`.
