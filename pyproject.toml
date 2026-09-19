@@ -17,7 +17,7 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest", "ruff", "mypy", "httpx", "python-dotenv"]
-train = ["torch", "scikit-learn", "pandas", "matplotlib"]
+train = ["torch", "scikit-learn", "pandas", "matplotlib", "pyarrow"]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
