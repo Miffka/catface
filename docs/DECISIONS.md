@@ -6,6 +6,42 @@ was. Newest on top.
 
 ---
 
+## 2026-09-19 — `models/manifest.json` holds the detector pair now; RSCH-6 appends `expression_head`, doesn't replace the file
+
+**Decided:** `models/manifest.json` is committed today with two entries, `cat_face_localizer` and `cat_face_landmarks` (the CatFLW-trained HF detector pair `fetch_weights.py` downloads), in the exact shape RSCH-6 already specifies for its own entry: name, file, sha256, source, licence, input shape, metrics.
+
+**Why:** the detector pair has to exist before E0's "run the detector once over both Roboflow sets" step can run, and PLAN_PROJECT's inference path needs the same files. RSCH-6 was always going to write to this path in this shape, so starting the file now instead of waiting for RSCH-6 avoids a rename or a second manifest file later.
+
+**Alternative considered:** a separate `models/detector_manifest.json` for the app-track weights, keeping `manifest.json` for RSCH-6 alone. Rejected — one manifest is one place to check sha256s from, and the entry shape already matches.
+
+**How to apply:** RSCH-6 adds a third top-level key, `expression_head`, to this same file. It doesn't touch the two keys above.
+
+---
+
+## 2026-09-19 — `.env` loading uses `python-dotenv`, not a hand-rolled parser
+
+**Decided:** `fetch_data.py` calls `dotenv.load_dotenv` and `dotenv.set_key`; `python-dotenv` is now a `dev` group dependency.
+
+**Why:** the approved plan specified a four-line stdlib `KEY=VALUE` reader to avoid adding a dependency for something that small. `set_key` also has to handle the append-if-missing, quoting, and rewrite cases a hand-rolled version would either skip or reinvent, and dotenv is already the standard tool for exactly this job.
+
+**Alternative considered:** the stdlib parser as planned. Rejected on review — small enough to write, but the quoting edge cases are exactly the kind of already-solved problem that justifies reaching for a dependency instead of stdlib.
+
+**How to apply:** AGENTS.md's "dependencies are added in pyproject.toml, do not add one without asking" rule was followed — asked, and the user named `python-dotenv` directly.
+
+---
+
+## 2026-09-19 — E0 fetch scripts go in `scripts/`, not `catface.ml`, because one of them is app-track infra too
+
+**Decided:** `fetch_weights.py` and `fetch_data.py` live in `scripts/`, run as `uv run python scripts/fetch_weights.py` and `uv run python scripts/fetch_data.py`, not under `catface.ml` as AGENTS.md's research-script command line describes.
+
+**Why:** `fetch_weights.py` downloads the CatFLW-trained detector pair the app needs to run inference at all — PLAN_PROJECT's M2 build step calls this same script, not a research-only one. Filing it under `catface.ml` would put an app-track build dependency behind the import path the `api` track is forbidden from touching. `fetch_data.py` only serves E0, but splitting the two fetch scripts across two locations for that reason is worse than keeping both build-time fetchers in one place.
+
+**Alternative considered:** `catface/ml/fetch_data.py`, per AGENTS.md's stated convention. Built first, then moved once the shared-infra point above became obvious mid-review.
+
+**How to apply:** AGENTS.md's `uv run python -m catface.ml.<script>` line no longer covers either fetch script; it wants a `uv run python scripts/<script>.py` line next to it.
+
+---
+
 ## 2026-09-19 — `models/class_means.json` is an E1 deliverable, and the second cross-track artifact
 
 **Decided:** the per-class Procrustes mean shapes the editor maths subtracts get

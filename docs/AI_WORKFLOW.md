@@ -6,6 +6,22 @@ human checked or changed before accepting it.
 
 ---
 
+## 2026-09-19 — E0 download scripts: data → `data/`, weights → `models/`
+
+**Asked:** read `docs/backlog.md`, implement the E0 part — write scripts that download the data into `data/` and the models into `models/`.
+
+**Tool:** Claude Code, main session, `/ponytail full`. No subagents — two small download scripts and a few doc edits, nothing that needed parallel exploration.
+
+**What it did:** scoped down via a clarifying question to download scripts only (no detector run, no parquet cache — that's the rest of E0) and the three E0 sources only. Wrote `.env.example`, added `.env` to `.gitignore`, wrote `models/manifest.json` with sha256s read from the HF LFS tree API, `scripts/fetch_weights.py` (stdlib, streams to a `.part` file, verifies sha256, skips already-verified files), and `scripts/fetch_data.py` (Roboflow's export-poll flow, reverse-engineered from the `roboflow-python` SDK source, plus a plain Kaggle GET — that dataset is public and needs no key).
+
+**Checked by human:** four corrections during the run: no tests for the download scripts themselves; ask for credentials and write `.env.example` before writing any script, not after; move `fetch_data.py` out of `catface.ml` into `scripts/`, once it was clear `fetch_weights.py` is app-track infra too; use `python-dotenv` instead of the planned hand-rolled `.env` reader; anchor every path on `Path(__file__).resolve().parent.parent` instead of assuming the script runs from the repo root. All four are written up in `DECISIONS.md`.
+
+**What it caught:** running `fetch_data.py` for real turned up two backlog numbers that don't match the actual download. Roboflow cat-emotions-cgrxv is not 3 classes — the export has 8 raw folders (attentive 1,147, relaxed 752, uncomfortable 107, "no clear emotion recognizable" 37, sad 22, angry 3, unlabeled 2, "attentive uncomfortable" 1) and ships train-only, no valid/test split; angry has 3 images total. CatFLW is 2,079 images, not the 2,016 the backlog names. cat-emotions (7-class) matches its advertised ~98–100 images per class. Both Roboflow projects report licence CC BY 4.0 via the API — the backlog states CatFLW's licence (CC BY-NC 4.0) but leaves the other two as "check project page."
+
+**Not yet done:** running the detector, the parquet cache, near-duplicate hashing, the reject filter, the blind relabel — the rest of RSCH-0's acceptance criteria in `docs/backlog.md`. This session builds only the fetch step those depend on.
+
+---
+
 ## 2026-09-19 — Reviewed the three planning docs for gaps and over-engineering
 
 **Asked:** review `PLAN_RESEARCH.md`, `PLAN_PROJECT.md` and `backlog.md`; find
