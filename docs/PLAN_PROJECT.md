@@ -62,7 +62,11 @@ Runtime deps in `[project]`: fastapi, uvicorn, pydantic, sqlalchemy, alembic, nu
 opencv-python-headless, openvino, pillow.
 
 Groups: `dev` (pytest, ruff, mypy, httpx), `train` (torch, sklearn, pandas,
-matplotlib), `convert` (tensorflow-cpu, tf2onnx). Extras: `postgres`, `otel`.
+matplotlib). Extras: `postgres`, `otel`.
+
+No `convert` group. OpenVINO reads `.tflite` directly (below), so tensorflow-cpu
+and tf2onnx would be ~600 MB installed for a conversion nobody performs. *Add
+when:* M2 proves OpenVINO can't load the vendored weights.
 
 `uv sync` gives a reviewer the app with no torch download. Prod image builds with
 `--frozen --no-dev`.
@@ -91,8 +95,16 @@ Snapshot `/openapi.json` in tests so contract changes show up in the diff.
 ## Storage
 
 Tables: `uploads` (sha256 unique, storage key, dims), `predictions` (landmarks JSON,
-three scores, label, model_version, latency), `edits` (target state, intensity,
-target landmarks, storage key).
+`scores` JSON, label, model_version, latency), `edits` (target class, intensity,
+storage key).
+
+Two shapes to hold onto:
+- `scores` is one JSON column, not one column per class. E4 may merge classes, so
+  the class count is a research output, not a schema constant. A JSON column
+  survives that; three named columns need a migration.
+- `edits` doesn't store target landmarks. They're `source + intensity * delta` for
+  a known class, so they're recomputable from the row. *Add when:* the delta stops
+  being deterministic (per-user edits, hand-dragged points).
 
 Portability rules so the SQLite→Postgres swap is real:
 - `sqlalchemy.types.JSON`, not JSONB
@@ -131,12 +143,16 @@ ways to do this and either is fine: declare the route with `def` instead of
 the work to an executor. Pick one, write down which.
 
 Concurrency is bounded, not unbounded:
-- one compiled model, a small pool of InferRequests sized to the vCPU count
-- a semaphore capping concurrent inferences at 2 on a 2-vCPU box
-- a bounded wait queue on top of that. When the queue is full, return 503 with a
-  `Retry-After` header rather than accepting work the box can't do. A fast refusal
-  beats a slow timeout for everyone already in the queue.
-- per-request timeout so a pathological image can't hold a slot forever
+- one compiled model, one semaphore capping concurrent inferences at 2 on a 2-vCPU
+  box, acquired with a timeout. Timed out waiting → 503 with a `Retry-After`
+  header, rather than accepting work the box can't do. A fast refusal beats a slow
+  timeout for everyone already waiting.
+- per-request timeout on the inference itself, so a pathological image can't hold
+  a slot forever
+
+A bounded semaphore already *is* the bounded queue — the waiters are the queue and
+the acquire timeout is the eviction policy. *Add when:* the load test shows the
+semaphore alone can't hold p95, and then it's an InferRequest pool, measured first.
 
 OpenVINO settings: 2 streams × 1 thread, or 1 stream × 2 threads. Two streams
 generally gives better throughput with concurrent users, one stream gives better
@@ -188,8 +204,11 @@ credit-based plan, which closes the account when the credits run out. Everything
 above assumes t3.micro sizing regardless of provider, so the same numbers apply to a
 similarly sized VPS.
 
-**Load test.** Add `bench/load.py` (locust or k6): N concurrent users uploading a
-mix of small and large fixtures. Record p50, p95, error rate, 503 rate, and peak RSS
+**Load test.** Add `bench/load.py`: `asyncio` + `httpx` (already a dev dep), N
+concurrent users uploading a mix of small and large fixtures. Twenty lines fire N
+requests and take percentiles; locust and k6 are distributed load generators and
+this is five reviewers on one box. *Add when:* the load has to come from more than
+one machine. Record p50, p95, error rate, 503 rate, and peak RSS
 at 1, 5 and 20 concurrent users. Run it before and after tuning the stream settings
 and put the table in the README. This doubles as the evidence that the sizing
 decisions above were measured rather than guessed.
@@ -245,9 +264,17 @@ Poll `/readyz`, roll back on failure.
 
 ## Observability
 
-OTel FastAPI + SQLAlchemy instrumentation → collector → Prometheus/Loki/Tempo/Grafana.
+OTel FastAPI + SQLAlchemy instrumentation, exposed at `/metrics`, plus structured
+JSON logs to stdout. Scraped by a free hosted Grafana Cloud instance.
 Custom metrics: inference latency by stage, predictions by outcome, no-face count,
 inference queue depth, 503 backpressure count, cache hit rate, process RSS.
+
+Not self-hosting the collector + Prometheus + Loki + Tempo + Grafana on the app
+host: that stack is several hundred MB on a box already budgeted at ~700 MB of
+1024 MB, so it would OOM the thing it exists to observe. The plan and the fallback
+below are therefore inverted from the obvious order — hosted is the plan.
+*Add when:* the app moves to a host with room, at which point the compose file for
+the full stack is the stretch goal.
 
 One committed Grafana dashboard. Alerts: no-face rate above 50% for 10 minutes
 (fires when the model breaks and when users upload junk), plus queue saturation and
@@ -324,7 +351,8 @@ Each ends green and tagged.
 | ear warp smears | read-only channel, documented |
 | Postgres too heavy for the host | SQLite in prod with WAL, Postgres still proven in CI, tradeoff documented |
 | no time for full observability | metrics + one alert, note what was cut |
-| OOM under load even with swap | drop the otel stack off the app host, ship metrics to a free hosted Grafana instead |
+| hosted Grafana free tier unavailable | metrics + logs stay on `/metrics` and stdout; screenshot `/metrics` and one `docker logs` tail as the evidence, note it |
+| OOM under load even with swap | drop swap-thrashing suspects in order: retention job first, then Postgres → SQLite (row above), then the warp output cap |
 | latency unacceptable at 5 users | pre-resize harder (768px), or accept the upload and process it as a background job with a polling status endpoint |
 
 ## Docs to keep as I go
