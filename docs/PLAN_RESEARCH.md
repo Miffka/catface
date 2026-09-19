@@ -52,6 +52,15 @@ class from the full landmark configuration.
 
 ## Data
 
+**Data links**
+- https://huggingface.co/hugocornellier/cat-face-landmarks - model for cat face landmarks
+- https://www.kaggle.com/datasets/georgemartvel/catflw - Kaggle dataset with cat images and face landmarks
+- https://www.kaggle.com/datasets/crawford/cat-dataset - Kaggle CAT dataset
+- https://universe.roboflow.com/cat-emotion-classification/cat-emotions-cgrxv - Roboflow dataset with 3 classes
+- https://universe.roboflow.com/cats-xofvm/cat-emotions - Roboflow cat emotions dataset with 7 classes
+- https://www.kaggle.com/datasets/anshtanwar/pets-facial-expression-dataset - Kaggle dataset with pet facial expressions
+- https://www.robots.ox.ac.uk/~vgg/data/pets/ - VGG dataset with pet breeds
+
 | Source | Use | Licence |
 |---|---|---|
 | Roboflow cat-emotions-cgrxv, 2,071 imgs, 3 classes (angry / attentive / no clear emotion) | **primary** training set | check project page |
