@@ -7,6 +7,8 @@ Upload a cat photo and get 48 facial landmarks, an expression class, and two geo
 ```
 uv sync                                  # app: runtime + dev deps
 uv sync --group train --group dev        # add the research track (torch CPU, sklearn, pandas)
+uv run python scripts/fetch_weights.py   # tflite detector weights -> models/, sha256-checked against the manifest
+uv run python scripts/fetch_data.py      # E0 datasets -> data/ (Roboflow needs ROBOFLOW_API_KEY in .env, see .env.example)
 uv run pytest                            # app tests
 uv run python manage.py migrate          # database migrations
 uv run python -m catface.ml.<script>     # research scripts
