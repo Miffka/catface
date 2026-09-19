@@ -28,10 +28,7 @@ is meant to be rerun whenever the detector or filter changes; making the
 human remember a manual cleanup step defeats the point of scripting this at
 all.
 
-**How to apply:** `dataset_stats.write_readme` (full overwrite) and
-`append_section` (targeted replace) are now both rerun-safe. Any future
-section-writer added to either script should follow the same replace, not
-append, rule.
+**How to apply:** `dataset_stats.write_readme` (rewrites its own sections, keeps any it doesn't own) and `append_section` (targeted replace) are now both rerun-safe in either order. The first version of `write_readme` overwrote the whole file, so rerunning `dataset_stats.py` after `landmark_cache.py` silently erased the "Detector run (E0)" section from both dataset READMEs; found as an unexplained deletion in `git diff`. Any future section-writer added to either script should follow the same replace, not append, rule.
 
 ---
 

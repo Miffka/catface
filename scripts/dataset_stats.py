@@ -64,13 +64,23 @@ def catflw_counts(images_dir: Path, labels_dir: Path) -> dict[str, int]:
 
 
 def write_readme(readme_path: Path, title: str, sections: list[tuple[str, list[str]]]) -> None:
+    """Rewrite the owned sections; keep any "## heading" another script added
+    (landmark_cache.py's "Detector run (E0)") so rerun order doesn't matter."""
     readme_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = readme_path.read_text() if readme_path.exists() else ""
+    owned = {heading for heading, _ in sections}
+    foreign = [
+        s.rstrip("\n")
+        for s in re.split(r"(?m)^(?=## )", existing)[1:]
+        if s.split("\n", 1)[0][3:] not in owned
+    ]
     parts = [f"# {title}", ""]
     for heading, lines in sections:
         parts.append(f"## {heading}")
         parts.extend(lines)
         parts.append("")
-    readme_path.write_text("\n".join(parts))
+    parts.extend(s + "\n" for s in foreign)
+    readme_path.write_text("\n".join(parts) + ("\n" if foreign else ""))
 
 
 def append_section(readme_path: Path, heading: str, lines: list[str]) -> None:
