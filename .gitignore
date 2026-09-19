@@ -11,4 +11,23 @@ models/*
 !models/manifest.json
 
 experiments/
-data/
+
+# data is fetched, not committed; each dataset's README is the contract
+data/*
+!data/cat-emotions-3/
+data/cat-emotions-3/*
+!data/cat-emotions-3/README.txt
+
+!data/cat-emotions-7/
+data/cat-emotions-7/*
+!data/cat-emotions-7/README.txt
+
+!data/catflw/
+data/catflw/*
+!data/catflw/CatFLW dataset/
+data/catflw/CatFLW dataset/*
+!data/catflw/CatFLW dataset/README.txt
+
+!data/cache/
+data/cache/*
+!data/cache/README.md
