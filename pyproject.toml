@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest", "ruff", "mypy", "httpx"]
+dev = ["pytest", "ruff", "mypy", "httpx", "python-dotenv"]
 train = ["torch", "scikit-learn", "pandas", "matplotlib"]
 
 [tool.uv.sources]
