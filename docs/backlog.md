@@ -78,10 +78,12 @@ track entirely and escalate to Research PM before E1 starts.
 
 **Owner:** ML Engineer · **Blocked by:** RSCH-0, `core.geometry` (app track
 M2 — Procrustes lives there per AGENTS.md, and E1 imports it rather than
-writing a local copy) · **Time box:** 0.5 day
+writing a local copy) · **Time box:** 0.5 day · **Status:** closed 2026-09-19, QA verdict below
 
 **Question:** Is there visible class signal before training anything, and
 does any early PC track a confound (ear position, head yaw) instead?
+
+**Answer:** no on both counts, correctly so. PC1 tracks ear position (r = 0.84) and PC2 tracks head yaw (r = 0.90) before any class signal shows up, and the three usable classes (attentive, relaxed, uncomfortable) do not visibly separate in the first six PCs (best ratio 0.044, PC3). See `experiments/e1/README.md` and `docs/MODEL_REPORT.md` E1.
 
 **Method:**
 - Procrustes-align the cached landmarks (via `core.geometry`), cat-emotions-3
@@ -95,14 +97,29 @@ does any early PC track a confound (ear position, head yaw) instead?
   and not on the trained model, so it ships here, not at export.
 
 **Acceptance criteria:**
-- [ ] Procrustes + PCA run on the E0 cache (not raw landmarks)
-- [ ] First-six-PC plot committed to the run directory
-- [ ] Explicit call-out of any PC that tracks a pose confound
-- [ ] Explicit statement on whether classes separate visibly
-- [ ] `models/class_means.json` committed, one 48×2 mean per class, and the
+- [x] Procrustes + PCA run on the E0 cache (not raw landmarks)
+- [x] First-six-PC plot committed to the run directory
+- [x] Explicit call-out of any PC that tracks a pose confound
+- [x] Explicit statement on whether classes separate visibly
+- [x] `models/class_means.json` committed, one 48×2 mean per class, and the
       app track told it exists
 
 **Stop condition:** none named in the plan — this is a look, not a gate.
+
+**Research QA verdict (2026-09-19), subagent, read-only:**
+
+> ## QA: PASS
+> - [x] Procrustes + PCA run on the E0 cache, not raw landmarks — `scripts/shape_space.py` reads `data/cache/landmarks.parquet`, filters `dataset == "cat-emotions-3" & plausible == True` (2071 -> 2029 rows), runs `generalized_procrustes` from `core/geometry.py`, then `sklearn.decomposition.PCA(n_components=6)` on the aligned coordinates. Re-ran the script myself: reproduces row counts (2071/2029), explained variance, correlations, and bit-identical `models/class_means.json` and byte-identical plot PNGs.
+> - [x] Procrustes math correct — `procrustes_align` centers+scales `shape`/`reference` independently, fits rotation via SVD (Kabsch), and flips the sign of U's last column whenever `det(R) < 0` to forbid reflections; `generalized_procrustes` iterates this to a fixed point. `tests/test_geometry.py` (8 tests, all pass) includes a non-tautological reflection test that first shows an unconstrained Kabsch fit *would* land exactly on the reference via an improper rotation (det<0, residual ~1e-16), then confirms `procrustes_align` refuses that solution and returns a proper rotation instead.
+> - [x] First-six-PC plot(s) committed to `experiments/e1/plots/` — `pc_explained_variance.png` (bars for PC1-6 + cumulative line), `pc_scatter_grid.png` (PC1v2, PC3v4, PC5v6 colored by class), `pc_confound_scatter.png` (strongest confound hit). Visually confirmed both: scatter grid shows heavy class overlap, confound plot shows a clean linear PC2/head_yaw trend consistent with the reported r=0.90.
+> - [x] Explicit call-out of PC tracking a pose confound — `experiments/e1/README.md` states in prose (not just a plot reference): "**ear_position**: PC1 tracks it, r = 0.84" and "**head_yaw**: PC2 tracks it, r = 0.90," against a stated |r|>0.3 threshold. Re-ran the correlations myself from the same aligned array; matched to 3 significant figures (0.836, 0.896).
+> - [x] Explicit statement on class separation — README states in prose: "Classes do not visibly separate in the first six PCs — the best ratio (PC3, 0.044) is small." This is a between/within variance ratio computed across the three usable classes, re-derivable from the same aligned array; the scatter-grid plot backs it up visually (no separable clusters by color).
+> - [x] `models/class_means.json` committed (not gitignored) and correct — valid JSON, exactly 3 top-level keys (`attentive`, `relaxed`, `uncomfortable`), each a 48x2 array. Independently re-ran Procrustes over the same parquet filter and re-computed the `relaxed` class mean myself: max abs diff from the committed file is 0.0 (bit-exact, as expected since GPA+groupby is deterministic). `.gitignore`'s blanket `experiments/` line is gone; `git check-ignore` confirms `experiments/e1/README.md`, its plots, and `models/class_means.json` are all trackable.
+> - [x] App track told class_means.json exists — `docs/PLAN_PROJECT.md` documents it in four places (dataset table, M3 "committed not fetched" note, M5 fallback dependency, fallback table), predating this run. One stale spot found, not blocking: `AGENTS.md`'s "Cross-track dependency" section still calls the ONNX export "the only handoff between tracks," which `docs/DECISIONS.md`'s own "models/class_means.json is an E1 deliverable" entry already flagged as needing a one-line fix that was never applied — pre-existing grooming-era gap, not something E1 introduced, doesn't block this PASS.
+> - [x] Required-control check — RSCH-1 names no control beyond its acceptance criteria ("this is a look, not a gate"); no implicit control skipped.
+> - [x] Full test suite — `uv run pytest tests/ -v`: 13/13 pass (8 geometry + 5 plausibility).
+>
+> Result: negative on both fronts, and correctly so — PC1 tracks ear position (r=0.84) and PC2 tracks head yaw (r=0.90) before any class signal shows up, and the three usable classes (attentive/relaxed/uncomfortable) do not visibly separate in the first six PCs (best between/within ratio 0.044). This is RSCH-1's expected "look, not a gate" outcome, correctly reported rather than hidden, and every number reproduces exactly from the E0 cache and the committed script.
 
 ---
 

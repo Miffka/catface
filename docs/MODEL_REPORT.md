@@ -54,6 +54,29 @@ All 11 rejected detections have `plausible=True`. The confidence proxy separates
 
 Outcome: cat-emotions-7 is excluded from training. Every reject reason on it is image quality (fluffy or black cats, ears cropped, covered face, low resolution), and its worst-detected classes are the ones the reviewer found interchangeable. Its rows stay in the cache; downstream experiments filter `dataset == "cat-emotions-3"`.
 
+## E1: shape space (Procrustes + PCA)
+
+Question (RSCH-1): is there visible class signal before training anything, and does any early PC track a confound (ear position, head yaw) instead? Method and full numbers: `experiments/e1/README.md` and its plots in `experiments/e1/plots/`. Procrustes alignment via `core/geometry.py`, PCA via `scripts/shape_space.py`, on the E0 cache filtered to `dataset == "cat-emotions-3" & plausible == True` (2071 -> 2029 rows).
+
+**Explained variance, first six PCs:**
+
+| PC | explained variance | cumulative |
+|---|---|---|
+| PC1 | 34.5% | 34.5% |
+| PC2 | 26.5% | 61.0% |
+| PC3 | 10.2% | 71.2% |
+| PC4 | 5.3% | 76.6% |
+| PC5 | 3.5% | 80.1% |
+| PC6 | 2.3% | 82.4% |
+
+**Pose confounds:** PC1 tracks ear position (r = 0.84). PC2 tracks head yaw (r = 0.90). Both exceed the stated |r| > 0.3 threshold, and both land ahead of any PC carrying class signal.
+
+**Class separation:** the three usable classes (attentive, relaxed, uncomfortable) do not visibly separate in the first six PCs. Best between-class/within-class variance ratio is 0.044, at PC3.
+
+Answer to RSCH-1: no on both counts, and correctly so — this experiment names no stop condition ("this is a look, not a gate"), and a negative result here is the expected outcome, not a failure. Reported as a finding, per the process this report follows.
+
+`models/class_means.json` now exists: a 48x2 Procrustes-aligned mean per class for the three usable classes (attentive 1130, relaxed 730, uncomfortable 107 plausible rows). The app's `/edit` endpoint consumes it as the M3 warper's data dependency and the M5 manual-picker fallback.
+
 ## Limitations
 
 - The plausibility filter checks geometry only. An ear placed on black fur or at the image edge is geometrically plausible, so it passed 11 of 11 human-rejected detections. Expect the same misses on user uploads until an image-quality scoring step exists.

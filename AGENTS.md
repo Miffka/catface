@@ -50,14 +50,18 @@ point, then switch.
 
 Cross-track dependency
 
-The only handoff between tracks is `models/expression_head.onnx` +
+There are two handoffs between tracks. `models/class_means.json`
+(per-class Procrustes mean shapes) shipped at E1, ahead of the model —
+the app's warper (PLAN_PROJECT.md M3) depends on it, not on the
+trained classifier, which is what makes M5's fallback (manual class
+picker) actually work. The second is `models/expression_head.onnx` +
 its manifest entry, gated by the research track's Export Verifier
 (`docs/team/export-verifier.md`). The project track does not wait on
-this to make progress — PLAN_PROJECT.md's M5 fallback (manual class
-picker) exists exactly so it doesn't have to. If the project track
-picks up work that consumes the real model, check the manifest and the
-Export Verifier's PASS exist first; if they don't, that work isn't
-groomable yet and goes back to the backlog.
+the second one to make progress — that's exactly what M5's fallback
+is for. If the project track picks up work that consumes the real
+model, check the manifest and the Export Verifier's PASS exist first;
+if they don't, that work isn't groomable yet and goes back to the
+backlog.
 
 If PLAN_PROJECT.md work falls behind schedule, research stops — this is
 stated directly in PLAN_RESEARCH.md ("If the app is behind, research
