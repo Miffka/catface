@@ -1,6 +1,6 @@
 import numpy as np
 
-from catface.ml.plausibility import _EAR, EYE, MUZZLE, check_landmarks
+from catface.ml.plausibility import EAR, EYE, MUZZLE, check_landmarks
 
 BOX = (0.0, 0.0, 200.0, 200.0)
 IMG_W = IMG_H = 300
@@ -8,7 +8,7 @@ IMG_W = IMG_H = 300
 
 def _valid_landmarks() -> np.ndarray:
     landmarks = np.zeros((48, 2))
-    for i, idx in enumerate(_EAR):
+    for i, idx in enumerate(EAR):
         landmarks[idx] = (20 + i * 5, 20)
     for i, idx in enumerate(EYE):
         landmarks[idx] = (20 + i * 5, 60)

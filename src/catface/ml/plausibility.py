@@ -4,8 +4,9 @@ muzzle, no degenerate configurations, no absurd aspect ratios.
 Landmark index groups verified against 4 CatFLW ground-truth labels (one during
 initial derivation, three more as a spot check) and cross-checked against
 docs/plan-research.md's point counts (8 per eye, 5 per ear, 22 across nose and
-whiskers) — see docs/DECISIONS.md. Ear indices aren't needed here and are left
-undefined; re-derive them the same way if a later experiment needs them.
+whiskers) — see docs/DECISIONS.md. LEFT_EAR/RIGHT_EAR verified the same way at
+E1, once a real consumer (the pose-confound proxy in scripts/shape_space.py)
+needed them.
 """
 
 import numpy as np
@@ -16,8 +17,10 @@ from catface.ml.detect_landmarks import LANDMARK_MARGIN
 LEFT_EYE = (3, 4, 5, 6, 7, 36, 37, 38)
 RIGHT_EYE = (1, 8, 9, 10, 11, 39, 40, 41)
 EYE = LEFT_EYE + RIGHT_EYE
-_EAR = (22, 23, 24, 25, 26, 27, 28, 29, 30, 31)
-MUZZLE = tuple(i for i in range(48) if i not in EYE and i not in _EAR)
+LEFT_EAR = (22, 23, 24, 25, 26)
+RIGHT_EAR = (27, 28, 29, 30, 31)
+EAR = LEFT_EAR + RIGHT_EAR
+MUZZLE = tuple(i for i in range(48) if i not in EYE and i not in EAR)
 
 INSIDE_BOX_TOLERANCE = 0.15
 MIN_SPREAD_FRACTION = 0.05
