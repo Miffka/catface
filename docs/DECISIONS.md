@@ -6,6 +6,38 @@ was. Newest on top.
 
 ---
 
+## 2026-09-19 — cat-emotions-7 is out of the research training set
+
+**Decided:** E1 onward read the E0 cache with `dataset == "cat-emotions-3"` only. The 671 cat-emotions-7 rows stay in `data/cache/landmarks.parquet` (already computed, nothing to gain by deleting them) and its per-dataset README keeps its detector-run section for the record.
+
+**Why:** the 80-overlay spot check put 21 cat-emotions-7 images in front of the reviewer and 9 came back unusable. Every reason named was image quality: ears cropped out of frame (3), fluffy or black cats where the ear outline does not resolve (4), one covered face, one low-resolution photo. The same pass found Angry, Scared and Surprised visually interchangeable on this set, and those are the three classes with the worst detections (1/5, 0/2, 3/5 OK). cat-emotions-3 came back 57/59 OK in the same sitting.
+
+**Alternative considered:** keep the set and tighten `check_landmarks` until it rejects those images. Rejected: the filter sees geometry, and an ear placed on black fur or at the image edge is geometrically plausible. Even a filter that caught them would leave the label noise in place.
+
+**How to apply:** the classification problem is now cat-emotions-3's usable classes (attentive, relaxed, uncomfortable; what happens to the five tiny folders is decided at E1/E2 grooming). RSCH-4's 7-class confusion matrix is re-scoped in the backlog. The failure modes are a fact about photos users will upload too, so the app needs an image-quality scoring step before inference; that is a project-track item, groomed when picked up.
+
+---
+
+## 2026-09-19 — The 100-image blind relabel is waived
+
+**Decided:** RSCH-0's "relabel 100 images blind, report agreement" acceptance criterion is dropped, along with RSCH-7's matching report line. `docs/MODEL_REPORT.md` records the one label-quality observation we have (the non-blind spot-check note about Scared/Surprised/Angry) and states that no agreement number exists.
+
+**Why:** the reviewer's call. The dataset the relabel would have said most about is now excluded, and the remaining set has three coarse classes where a relabel would cost an hour to tell us the ceiling on a problem E2's confusion matrix will show anyway.
+
+**Alternative considered:** run the relabel on cat-emotions-3 only. Not rejected on principle, just not now; the tooling is a shuffled image dump plus a CSV, so it can be added at E2 if the confusion matrix makes the ceiling matter.
+
+---
+
+## 2026-09-19 — RSCH-0 re-scoped: the reject-sample review control is dropped
+
+**Decided:** RSCH-0's required control "eyeball a sample of filter rejects, confirm the filter isn't throwing away hard-but-valid cases" is removed from the issue. Research QA judges E0 against the re-scoped issue. This is a methodology re-scope under `research_process.md` step 5, recorded here so it does not read as a skipped control.
+
+**Why:** the 80-image sample was drawn from all rows and hit none of the 60 rejects (2.2% of rows), so the control did not happen as a side effect. Running it means drawing and eyeballing a second sample. The reviewer decided that is not worth doing now: the filter drops 42 of 2071 cat-emotions-3 rows (2.0%), and the spot check already showed its real weakness is the other direction (11 of 11 human-rejected detections passed).
+
+**Alternative considered:** dump the 60 reject overlays and review them. Deferred, not rejected; `scripts/landmark_cache.py --from-cache` makes that a cheap add if E1's PCA shows outliers that look like filter misses.
+
+---
+
 ## 2026-09-19 — `append_section` replaces a same-named section instead of duplicating it on rerun
 
 **Decided:** `scripts/dataset_stats.py:append_section` now parses the

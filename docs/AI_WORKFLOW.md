@@ -6,6 +6,20 @@ human checked or changed before accepting it.
 
 ---
 
+## 2026-09-19 — E0 close-out: overlay verdict analysis, MODEL_REPORT, QA, backlog
+
+**Asked:** analyse the 80-overlay verdict the user had written by hand into `data/cache/overlays/overlay.csv`, take the user's observation that Scared, Surprised and Angry were mixed up, and close RSCH-0.
+
+**Tool:** Claude Code, main session, plan mode, `/ponytail full`. No Explore or Plan agents; the file set was small and known. One `general-purpose` agent ran as Research QA (read-only) for the verdict.
+
+**What it did:** joined the CSV back to `landmarks.parquet` by regenerating the same `sample(80, random_state=0)` and matching the trailing index in each filename. That join produced the findings the close-out rests on: 69/80 OK overall but 57/59 on cat-emotions-3 versus 12/21 on cat-emotions-7; every one of the 11 human-rejected detections has `plausible=True`; the random sample contained none of the 60 filter rejects, so the reject-review control had silently not happened. Also found that the uncommitted deletions in both dataset `README.txt` files were caused by `dataset_stats.py` being rerun after `landmark_cache.py`: `write_readme` overwrote the whole file and erased the "Detector run (E0)" section. Fixed `write_readme` to keep sections it does not own, added `--from-cache` to `landmark_cache.py` so READMEs and overlays regenerate without a detector pass, and reran both scripts in both orders to confirm the READMEs are byte-stable. Wrote `docs/MODEL_REPORT.md`, three DECISIONS entries, and the backlog edits (RSCH-0 closed, RSCH-1 to RSCH-4 scoped to cat-emotions-3, RSCH-4's 7-class matrix replaced, RSCH-7's relabel line replaced).
+
+**Checked by human:** the user made four decisions before implementation: exclude cat-emotions-7 from training (their reading of the reject reasons: image quality, not detector fault; image-quality scoring to be added at inference later), waive the blind relabel, skip the reject-sample review at this stage, and run Research QA as a subagent. The user also approved, at the QA agent's permission prompt, that agent rewriting `MODEL_REPORT.md` into a shorter form with a Models section; the main session then verified the facts the agent added (HF source, NME 3.48, 0.1 crop margin, CatFLW 2079 on disk) against `models/manifest.json`, `detect_landmarks.py` and the CatFLW README. One typo in the user's CSV (`annotation_ok=25`) was corrected to `1` with their approval of the plan. Citation details in MODEL_REPORT were written from the assistant's memory and need a human check against the papers.
+
+**What it caught:** nothing that changed the E0 answer. QA re-derived every reported number and all matched; it did catch one wording slip in the first MODEL_REPORT draft (the two "mouth open" passes were one per dataset, not both cat-emotions-3) and fixed it in the rewrite.
+
+---
+
 ## 2026-09-19 — E0 remainder: licence table, near-duplicate check, plausibility filter, parquet cache
 
 **Asked:** read `docs/backlog.md`, implement the rest of RSCH-0 (E0) —

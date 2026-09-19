@@ -15,10 +15,12 @@ controls, stop condition) since no generic task template exists in this repo.
 
 ## [research] RSCH-0: E0 — landmark cache
 
-**Owner:** Data Steward · **Blocked by:** none · **Time box:** 0.5 day
+**Owner:** Data Steward · **Blocked by:** none · **Time box:** 0.5 day · **Status:** closed 2026-09-19, QA verdict below
 
 **Question:** Does the landmark detector (trained on CatFLW) work on the
 Roboflow image distribution at all?
+
+**Answer:** yes on cat-emotions-3 (57/59 spot-checked detections OK, 2.0% filter drop rate). cat-emotions-7 is excluded from training for image-quality reasons; see `docs/DECISIONS.md` 2026-09-19 and `docs/MODEL_REPORT.md` E0.
 
 **Method:**
 - Record the licence for every source: Roboflow cat-emotions-cgrxv (2,071
@@ -31,26 +33,44 @@ Roboflow image distribution at all?
   `image_id, class, 48x2 landmarks, face_box, detector_confidence`
 - Filter implausible detections (points inside box, eyes above muzzle, no
   degenerate/collapsed configs, no absurd aspect ratios); report drop count
-- Eyeball 20 random overlays and a sample of rejects; confirm the filter
-  isn't throwing away hard-but-valid cases
+- Eyeball random overlays (80 in practice); confirm the detector works on
+  this image distribution
 - Plot class distribution and detector confidence
-- Relabel 100 images blind, compare to dataset labels, report agreement
-  (cheap, ~1 hour, gives an approximate accuracy ceiling for E2 onward)
+- ~~Relabel 100 images blind, compare to dataset labels, report agreement~~
+  waived, `docs/DECISIONS.md` 2026-09-19
+- ~~Eyeball a sample of rejects; confirm the filter isn't throwing away
+  hard-but-valid cases~~ dropped from scope, `docs/DECISIONS.md` 2026-09-19
 
-**Required controls:** near-duplicate hash check, reject-sample review
-(not just the drop count)
+**Required controls:** near-duplicate hash check. (Reject-sample review was a
+required control at grooming; re-scoped out on 2026-09-19, see DECISIONS.)
 
 **Acceptance criteria:**
-- [ ] Licence table filled in for all three sources
-- [ ] Near-duplicate result reported (found or not)
-- [ ] Actual vs advertised class balance reported
-- [ ] Parquet cache exists at the path downstream experiments read from
-- [ ] Reject count + manual sample verdict in the issue comment
-- [ ] 20-overlay spot check done and reported
-- [ ] 100-image blind relabel agreement number reported
+- [x] Licence table filled in for all three sources (`data/*/README.txt`, `docs/MODEL_REPORT.md`)
+- [x] Near-duplicate result reported (0 pairs at dHash Hamming ≤ 5, `data/cache/near_duplicates.csv`)
+- [x] Actual vs advertised class balance reported (cat-emotions-3: 8 folders, not 3)
+- [x] Parquet cache exists at `data/cache/landmarks.parquet`
+- [x] Reject count reported (42 of 2071 on cat-emotions-3; 60 of 2742 overall)
+- [x] Overlay spot check done and reported (80 images, `data/cache/overlays/overlay.csv`, summary in MODEL_REPORT)
+- [x] Stop condition answered explicitly: NOT triggered
+- ~~100-image blind relabel agreement number reported~~ waived
+- ~~Manual reject-sample verdict~~ dropped from scope
 
 **Stop condition:** if the detector fails on most images, halt the research
 track entirely and escalate to Research PM before E1 starts.
+
+**Research QA verdict (2026-09-19), subagent, read-only:**
+
+> ## QA: PASS
+> - [x] Re-scopes on record: three 2026-09-19 entries in `docs/DECISIONS.md` (cat-emotions-7 excluded, relabel waived, reject review dropped); backlog strikes both and points at them
+> - [x] Required control, near-duplicate hash check: `near_duplicates.csv` header-only, 0 pairs at dHash Hamming <= 5, closest pair 6; both dataset READMEs agree
+> - [x] Licence table: CC BY 4.0 / CC BY 4.0 / CC BY-NC 4.0 with URL and confirmation source in each `data/*/README.txt` and MODEL_REPORT
+> - [x] Actual vs advertised: cat-emotions-3 8 folders not 3 (2071 matches parquet); cat-emotions-7 7 classes; CatFLW 2079 on disk vs 2016 advertised, stated in both places
+> - [x] Parquet cache at `data/cache/landmarks.parquet`, 2742 rows, all 12 declared columns
+> - [x] Reject count re-derived from parquet: cat-emotions-3 2071 / 2029 / 42 (eyes_below_muzzle 21, degenerate 20, detection_failed 1, bad_aspect_ratio 1); cat-emotions-7 671 / 653 / 18; matches reported exactly
+> - [x] Overlay spot check reproduced: `valid.sample(80, random_state=0)` matches all 80 filenames; 59/57 and 21/12, 69/80 total; all 11 rejected rows `plausible == True`; proxy means 0.958 vs 0.993. Matches
+> - [x] Stop condition stated verbatim as NOT triggered in `data/cache/README.md` (with the 50% definition) and MODEL_REPORT
+>
+> Result: every reported number re-derives from the parquet and CSV; the one remaining required control ran and produced a documented negative. Detector works on cat-emotions-3 (57/59 by human judgment, 2.0% filter drop).
 
 ---
 
@@ -64,7 +84,8 @@ writing a local copy) · **Time box:** 0.5 day
 does any early PC track a confound (ear position, head yaw) instead?
 
 **Method:**
-- Procrustes-align the cached landmarks (via `core.geometry`)
+- Procrustes-align the cached landmarks (via `core.geometry`), cat-emotions-3
+  rows only (`docs/DECISIONS.md` 2026-09-19)
 - PCA, plot the first six components
 - Check whether any component visibly tracks ear position or head yaw
 - Check whether classes visibly separate in the first few PCs
@@ -92,8 +113,9 @@ does any early PC track a confound (ear position, head yaw) instead?
 **Question:** Q2 — does a learned model beat two geometric ratios (eye
 aperture, ear angle) fed to logistic regression?
 
-**Method:** Same stratified splits for all three, 5-fold, balanced class
-weights:
+**Method:** cat-emotions-3 rows only (`docs/DECISIONS.md` 2026-09-19); which
+of its 8 label folders become classes is decided here at grooming. Same
+stratified splits for all three, 5-fold, balanced class weights:
 1. Logistic regression on eye aperture + ear angle
 2. Logistic regression on all Procrustes-aligned coordinates
 3. MLP, two hidden layers, same input as (2)
@@ -128,7 +150,8 @@ beat the E2 MLP?
 - Adjacency hand-written from anatomy in `core/graph.py`: eyelid contours
   as rings, ear base→tip, whisker pads→nose, nose→mouth, eyes→ear bases.
   Normalise `D^-1/2 (A+I) D^-1/2`
-- Node features: aligned `(x,y)` plus offset from the mean shape
+- Node features: aligned `(x,y)` plus offset from the mean shape; same
+  cat-emotions-3-only rows and splits as E2
 - **Before training it:** export the untrained model to ONNX once. The
   no-PyG decision above is an assumption about export behaviour, and this
   is the cheap place to test it — an export problem found here changes the
@@ -158,13 +181,17 @@ beat the E2 MLP?
 **Question:** Q3 (pose contamination) and Q4 (class separability).
 
 **Method:**
-- Confusion matrix on the 7-class set; merge classes that are inseparable
-  and state why (expect disgusted/surprised confusion)
+- Confusion matrix over cat-emotions-3's classes as E2 defined them (the
+  7-class set is excluded, `docs/DECISIONS.md` 2026-09-19; usable folders are
+  attentive 1147, relaxed 752, uncomfortable 107, the other five are too
+  small to be classes). Merge classes that are inseparable and state why.
+  The E0 spot check found Scared/Surprised/Angry interchangeable on
+  cat-emotions-7; if that set ever comes back, that is the expected merge.
 - Estimate head yaw from landmark asymmetry, bin it, report accuracy per
   bin
 
 **Acceptance criteria:**
-- [ ] 7-class confusion matrix produced, merge decisions stated with reason
+- [ ] Confusion matrix over the E2 classes produced, merge decisions stated with reason
 - [ ] Yaw estimated and binned; accuracy-per-bin table produced
 - [ ] A one-sentence pose verdict in the shape "stable under N degrees,
       degrades past that" — this becomes the app's confidence penalty input
@@ -241,8 +268,10 @@ blocked by every other item would have contradicted that method and turned
 the report into the end-of-project scramble the process exists to prevent.
 
 **Acceptance criteria:**
-- [ ] Dataset table with licences and the E0 near-duplicate result
-- [ ] Label quality: 100-image blind relabel agreement number
+- [x] Dataset table with licences, the E0 near-duplicate result, and the
+      cat-emotions-7 exclusion with its reason
+- [x] Label quality: blind relabel waived (`docs/DECISIONS.md` 2026-09-19),
+      the informal spot-check note recorded instead
 - [ ] Results for all four models (2× logistic regression, MLP, GNN) plus
       the random-adjacency ablation
 - [ ] Q1–Q5 answered explicitly, negative answers included
