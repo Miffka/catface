@@ -37,10 +37,10 @@ TRIGGERED means halt the research track and escalate to the Research PM before E
 See `near_duplicates.csv` and the per-dataset README.txt (written by
 `scripts/dataset_stats.py`).
 
-## 20-overlay spot check (human TODO)
-20 images sampled uniformly at random (not filtered by `plausible`) into
-`overlays/`. A human needs to look at them and say whether the detector/filter look
-sound — not done by this script.
+## 80-overlay spot check
+80 images sampled uniformly at random (not filtered by `plausible`) into
+`overlays/`. The human verdict per image is `overlays/overlay.csv`
+(`img_fn, annotation_ok, reason`); the summary is in `docs/MODEL_REPORT.md`.
 
-## 100-image blind relabel — NOT DONE (out of scope, manual)
-Explicitly out of scope for this pass.
+## 100-image blind relabel
+Waived — see `docs/DECISIONS.md` (2026-09-19).

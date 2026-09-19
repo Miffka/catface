@@ -148,7 +148,7 @@ def _plot_confidence_hist(df: pd.DataFrame, out_path: Path) -> None:
     plt.close(fig)
 
 
-def _write_cache_readme(df: pd.DataFrame, readme_path: Path) -> None:
+def _write_cache_readme(df: pd.DataFrame, readme_path: Path, overlay_count: int) -> None:
     total = len(df)
     plausible = int(df["plausible"].sum())
     pass_rate = plausible / total if total else 0.0
@@ -200,13 +200,13 @@ def _write_cache_readme(df: pd.DataFrame, readme_path: Path) -> None:
         "See `near_duplicates.csv` and the per-dataset README.txt (written by",
         "`scripts/dataset_stats.py`).",
         "",
-        "## 20-overlay spot check (human TODO)",
-        f"{min(20, total)} images sampled uniformly at random (not filtered by `plausible`) into",
-        "`overlays/`. A human needs to look at them and say whether the detector/filter look",
-        "sound — not done by this script.",
+        f"## {min(overlay_count, total)}-overlay spot check",
+        f"{min(overlay_count, total)} images sampled uniformly at random (not filtered by `plausible`) into",
+        "`overlays/`. The human verdict per image is `overlays/overlay.csv`",
+        "(`img_fn, annotation_ok, reason`); the summary is in `docs/MODEL_REPORT.md`.",
         "",
-        "## 100-image blind relabel — NOT DONE (out of scope, manual)",
-        "Explicitly out of scope for this pass.",
+        "## 100-image blind relabel",
+        "Waived — see `docs/DECISIONS.md` (2026-09-19).",
     ]
     readme_path.parent.mkdir(parents=True, exist_ok=True)
     readme_path.write_text("\n".join(lines))
@@ -215,20 +215,27 @@ def _write_cache_readme(df: pd.DataFrame, readme_path: Path) -> None:
 def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--overlay-count", type=int, default=20)
+    parser.add_argument("--overlay-count", type=int, default=80)
+    parser.add_argument(
+        "--from-cache",
+        action="store_true",
+        help="skip the detector; regenerate overlays, plots and READMEs from the existing parquet",
+    )
     args = parser.parse_args(argv)
 
-    localizer, landmarks_model = load_models(ROOT / "models" / "manifest.json")
-
-    print("running detector over cat-emotions-3 and cat-emotions-7...")
-    df = build_cache(DATASETS, localizer, landmarks_model)
-
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(CACHE_DIR / "landmarks.parquet", index=False)
+    if args.from_cache:
+        df = pd.read_parquet(CACHE_DIR / "landmarks.parquet")
+        df["drop_reasons"] = df["drop_reasons"].map(list)  # parquet gives back numpy arrays
+    else:
+        localizer, landmarks_model = load_models(ROOT / "models" / "manifest.json")
+        print("running detector over cat-emotions-3 and cat-emotions-7...")
+        df = build_cache(DATASETS, localizer, landmarks_model)
+        df.to_parquet(CACHE_DIR / "landmarks.parquet", index=False)
 
     sample_overlays(df, args.overlay_count, args.seed, CACHE_DIR / "overlays")
     _plot_confidence_hist(df, CACHE_DIR / "plots" / "detector_confidence_hist.png")
-    _write_cache_readme(df, CACHE_DIR / "README.md")
+    _write_cache_readme(df, CACHE_DIR / "README.md", args.overlay_count)
 
     for dataset_name in DATASETS:
         subset = df[df["dataset"] == dataset_name]
