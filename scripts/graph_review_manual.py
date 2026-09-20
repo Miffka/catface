@@ -1,4 +1,6 @@
-"""Render the hand-edited E3 adjacency (models/graph_edges_manual.txt)
+"""Render the hand-edited E3 adjacency
+(models/graph_edge_schemes/graph_edges_manual_v3.txt, via
+`core.graph.DEFAULT_EDGES_PATH`)
 over each class-mean shape, for manual review. Edge parsing comes from
 core.graph (per AGENTS.md, don't reimplement core logic in scripts); only
 the legend-label parsing (review-only, doesn't belong in core.graph) stays

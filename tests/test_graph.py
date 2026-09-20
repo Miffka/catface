@@ -51,7 +51,8 @@ def test_build_cat_edges_default_path_covers_all_48_nodes():
     edges = build_cat_edges()
     touched = {i for edge in edges for i in edge}
     assert touched == set(range(48))
-    assert len(edges) == 76  # 78 raw (i,j) lines in models/graph_edges_manual.txt, 76 unique
+    # 100 raw (i,j) lines in graph_edges_manual_v3.txt, 98 unique after dedupe.
+    assert len(edges) == 98
 
 
 def test_build_cat_adjacency_shape_and_no_torch_geometric():

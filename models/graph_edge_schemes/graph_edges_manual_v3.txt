@@ -1,0 +1,197 @@
+# E3 anatomical adjacency edge list (docs/backlog.md RSCH-3).
+# Format: (node1, node2) per line, grouped by construction rule.
+# Node group legend:
+#   0: mouth
+#   1: right_eye, pupil, bottom
+#   2: mouth, chin
+#   3: left_eye, pupil, bottom
+#   4: left_eye, eyelid, outside, left
+#   5: left_eye, eyelid, inside, right
+#   6: left_eye, eyelid, top
+#   7: left_eye, eyelid, bottom
+#   8: right_eye, eyelid, outside, right
+#   9: right_eye, eyelid, inside, left
+#   10: right_eye, eyelid, top
+#   11: right_eye, eyelid, bottom
+#   12: nose, top, left
+#   13: nose, top, right
+#   14: nose, left_nostril, middle
+#   15: nose, right_nostril, middle
+#   16: nose, philtrum
+#   17: mouth, top
+#   18: mouth, corner, right
+#   19: right_muzzle, cheek, right
+#   20: mouth, corner, left
+#   21: left_muzzle, bottom
+#   22: left_ear, bottom, outside, left
+#   23: left_ear, middle, outside, left
+#   24: left_ear, top
+#   25: left_ear, middle, inside, right
+#   26: left_ear, bottom, inside, right
+#   27: right_ear, bottom, inside, left
+#   28: right_ear, middle, inside, left
+#   29: right_ear, top
+#   30: right_ear, middle, outside, right
+#   31: right_ear, bottom, outside, right
+#   32: left_whisker_pad, outside, left
+#   33: left_muzzle, middle
+#   34: right_muzzle, middle
+#   35: right_whisker_pad, outside, right
+#   36: left_eye, pupil, outside, left
+#   37: left_eye, pupil, inside, right
+#   38: left_eye, pupil, top
+#   39: right_eye, pupil, top
+#   40: right_eye, pupil, inside, left
+#   41: right_eye, pupil, outside, right
+#   42: left_whisker_pad, middle
+#   43: right_whisker_pad, middle
+#   44: nose, left_nostril, bottom
+#   45: nose, right_nostril, bottom
+#   46: left_muzzle, outside, left
+#   47: right_muzzle, outside, right
+
+# -- left_eye_pupil --
+(36, 38)
+(36, 3)
+(38, 37)
+(3, 37)
+(36, 37)
+(38, 3)
+
+# -- left_eye_lid --
+(4, 6)
+(4, 7)
+(7, 5)
+(5, 6)
+(6, 7)
+(4, 5)
+
+# -- left_eye_pupil_lid_connection --
+(6, 38) # upper point of eyelid to upper point of pupil
+(3, 7) # lower point of pupil to lower point of eyelid
+(4, 36)
+(37, 5)
+
+# -- right_eye_pupil --
+(41, 39)
+(39, 40)
+(1, 40)
+(1, 41)
+(40, 41) # cross-pupil line
+(39, 1)
+
+# -- right_eye_lid --
+(10, 8)
+(10, 9)
+(9, 11)
+(11, 8)
+(10, 11)
+(9, 8)
+
+# -- right_eye_pupil_lid_connection --
+(10, 39) # upper point of eyelid to upper point of pupil
+(1, 11) # lower point of pupil to lower point of eyelid
+(9, 40)
+(41, 8)
+
+# -- left_ear_chain_base_to_tip --
+(22, 26)  # left_ear -> left_ear
+(23, 26)  # left_ear -> left_ear
+(23, 25)  # left_ear -> left_ear
+(24, 25)  # left_ear -> left_ear
+(25, 22)
+
+# -- left_ear_contour --
+(26, 25)
+(25, 24)
+(24, 23)
+(23, 22)
+
+# -- right_ear_chain_base_to_tip --
+(27, 31)  # right_ear -> right_ear
+(27, 30)  # right_ear -> right_ear
+(28, 30)  # right_ear -> right_ear
+(28, 29)  # right_ear -> right_ear
+(28, 31)
+
+# -- right_ear_contour --
+(27, 28)
+(28, 29)
+(29, 30)
+(30, 31)
+
+# -- top_head -- 
+(26, 27)
+
+# -- nose_ring --
+(12, 13)
+(12, 14)
+(14, 44)
+(44, 45)
+(45, 15)
+(15, 13)
+
+# -- nose_cross --
+(12, 44)
+(13, 45)
+(12, 45)
+(13, 44)
+
+# -- whisker_pad_connection --
+(32, 42)
+(35, 43)
+
+# -- whisker_pad_to_nose_connection --
+(14, 42)
+(15, 43)
+
+# -- left_whisker_pad_to_muzzle_connection --
+(32, 43)
+(42, 46)
+(32, 46)
+
+# -- right_whisker_pad_to_muzzle_connection --
+(34, 35)
+(43, 47)
+(35, 47)
+
+# -- mouth_ring --
+(16, 17)
+(17, 18)
+(18, 2)
+(2, 20)
+(20, 17)
+(0, 17)
+(0, 2)
+(0, 20)
+(0, 18)
+
+# -- bridge_nose_to_mouth --
+(12, 16)
+(13, 16)
+
+# -- left_muzzle_ring --
+(20, 21)
+(21, 46)
+(46, 33)
+(33, 20)
+(33, 21)
+(46, 20)
+
+# -- right_muzzle_ring --
+(18, 19)
+(19, 47)
+(47, 34)
+(34, 18)
+(18, 47)
+(34, 19)
+
+# -- left_muzzle_to_whisker_pad --
+(33, 42)
+(33, 14)
+(33, 44)
+
+# -- right_muzzle_to_whisker_pad --
+(34, 43)
+(34, 15)
+(34, 45)

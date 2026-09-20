@@ -25,6 +25,7 @@ from catface.ml.splits import CACHE_PATH, load_splits_cache
 class Features(NamedTuple):
     ratio_X: np.ndarray  # (N, 3)
     coord_X: np.ndarray  # (N, 96)
+    node_X: np.ndarray  # (N, 48, 4)
     y: np.ndarray  # (N,) int-encoded label
     split: np.ndarray  # (N,) fold index 0-4
     classes: list[str]  # class name per encoded int, in encoder order
@@ -79,13 +80,26 @@ def coord_features(raw_shapes: np.ndarray) -> np.ndarray:
     return aligned.reshape(len(aligned), -1)
 
 
+def node_features(raw_shapes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(N, 48, 4): per-node Procrustes-aligned (x,y) plus offset from the
+    mean shape (x,y), for E3's GNN. `mean_shape` is constant across rows but
+    varies per node, and the graph conv's weight is shared across all 48
+    nodes with no per-node bias -- the offset channel is what hands the
+    network each node's own baseline position. Returns (node_X, mean_shape)."""
+    aligned, mean_shape = generalized_procrustes(raw_shapes)
+    offset = aligned - mean_shape
+    return np.concatenate([aligned, offset], axis=-1), mean_shape
+
+
 def load_features() -> Features:
     raw_shapes, label, split = load_raw_shapes()
     encoder = LabelEncoder()
     y = encoder.fit_transform(label)
+    node_X, _mean_shape = node_features(raw_shapes)
     return Features(
         ratio_X=ratio_features(raw_shapes),
         coord_X=coord_features(raw_shapes),
+        node_X=node_X,
         y=y,
         split=split,
         classes=list(encoder.classes_),

@@ -1,7 +1,8 @@
 """Adjacency construction for the 48-node cat-face graph (E3, RSCH-3).
 
 The anatomical adjacency is hand-authored and hand-reviewed, not
-geometrically derived: `build_cat_edges` parses `models/graph_edges_manual.txt`,
+geometrically derived: `build_cat_edges` parses
+`models/graph_edge_schemes/graph_edges_manual_v3.txt`,
 an edge list a human wrote after reviewing rendered overlays of an earlier
 geometric version (`scripts/graph_review_manual.py`). This module therefore
 does I/O (it reads that file) -- see docs/DECISIONS.md's 2026-09-20 entry for
@@ -19,7 +20,7 @@ import numpy as np
 Edge = tuple[int, int]
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_EDGES_PATH = ROOT / "models" / "graph_edges_manual.txt"
+DEFAULT_EDGES_PATH = ROOT / "models" / "graph_edge_schemes" / "graph_edges_manual_v3.txt"
 
 _EDGE_LINE = re.compile(r"^\((\d+)\s*,\s*(\d+)\)")
 

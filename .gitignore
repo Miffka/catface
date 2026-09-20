@@ -10,6 +10,9 @@ __pycache__/
 models/*
 !models/manifest.json
 !models/class_means.json
+# the E3 adjacency is hand-authored source, not a fetched weight: it is the
+# sole independent variable of RSCH-3 and config.json pins its sha256
+!models/graph_edge_schemes/
 
 # data is fetched, not committed; each dataset's README is the contract
 data/*
