@@ -148,7 +148,7 @@ def q3_verdict(
     Returns (status, verdict text).
     """
     use_degrees, rho_sentence = rho_reading(rho, rho_ci)
-    quantity = "yaw" if use_degrees else "the foreshortening ratio"
+    quantity = "yaw" if use_degrees else "foreshortening-ratio"
     frontal, later = bins[0], bins[1:]
     shifted = [b for b in bins if b["tv"] > TV_TOLERANCE]
 
