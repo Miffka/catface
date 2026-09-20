@@ -4,7 +4,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from catface.ml import coords_lr, mlp, ratios_lr, splits
+from catface.ml import coords_lr, mlp, random_baseline, ratios_lr, splits
+from catface.ml.cv import oversample_to_balance
 from catface.ml.features import coord_features, ratio_features
 from catface.ml.plausibility import EAR, EYE, MUZZLE
 
@@ -13,7 +14,20 @@ requires_splits_cache = pytest.mark.skipif(
     reason="data/cache/splits.csv not generated yet -- run `uv run python scripts/make_splits.py` first",
 )
 
-EXPECTED_METRIC_KEYS = {"per_fold_macro_f1", "mean_macro_f1", "confusion_matrix", "model", "n_features"}
+EXPECTED_METRIC_KEYS = {
+    "per_fold_macro_f1",
+    "mean_macro_f1",
+    "std_macro_f1",
+    "per_fold_kappa",
+    "mean_kappa",
+    "std_kappa",
+    "per_fold_mcc",
+    "mean_mcc",
+    "std_mcc",
+    "confusion_matrix",
+    "model",
+    "n_features",
+}
 
 
 def test_splits_cache_round_trip():
@@ -73,3 +87,24 @@ def test_mlp_run_smoke():
     metrics = mlp.run()
     assert EXPECTED_METRIC_KEYS <= metrics.keys()
     assert len(metrics["per_fold_macro_f1"]) == 5
+
+
+@requires_splits_cache
+def test_random_baseline_run_smoke():
+    metrics = random_baseline.run()
+    assert EXPECTED_METRIC_KEYS <= metrics.keys()
+    assert len(metrics["per_fold_macro_f1"]) == 5
+
+
+def test_oversample_to_balance():
+    rng = np.random.default_rng(0)
+    X = np.concatenate([rng.normal(size=(14, 2)), rng.normal(size=(4, 2)), rng.normal(size=(2, 2))])
+    y = np.array([0] * 14 + [1] * 4 + [2] * 2)
+
+    X_bal, y_bal = oversample_to_balance(X, y, seed=0)
+    counts = np.bincount(y_bal)
+    assert (counts == 14).all()
+
+    X_bal2, y_bal2 = oversample_to_balance(X, y, seed=0)
+    np.testing.assert_array_equal(X_bal, X_bal2)
+    np.testing.assert_array_equal(y_bal, y_bal2)

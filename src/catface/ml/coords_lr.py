@@ -9,12 +9,14 @@ from catface.ml.features import load_features
 
 
 def build_model() -> LogisticRegression:
-    return LogisticRegression(class_weight="balanced")
+    return LogisticRegression()
 
 
 def run() -> dict:
     features = load_features()
-    metrics = cv.cross_validate(features.coord_X, features.y, features.split, build_model)
+    metrics = cv.cross_validate(
+        features.coord_X, features.y, features.split, build_model, oversample=True
+    )
     metrics["labels"] = features.classes
     metrics["model"] = "coords_lr"
     metrics["n_features"] = 96

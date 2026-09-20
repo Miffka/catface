@@ -18,7 +18,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from catface.ml import coords_lr, mlp, ratios_lr
+from catface.ml import coords_lr, mlp, random_baseline, ratios_lr
 from catface.ml.features import load_raw_shapes
 from catface.ml.splits import SPLITS_PATH, USABLE_CLASSES
 
@@ -105,14 +105,17 @@ def q2_verdict(all_metrics: dict[str, dict]) -> tuple[bool, str]:
 def model_results_section(name: str, metrics: dict) -> list[str]:
     labels = metrics["labels"]
     cm = metrics["confusion_matrix"]
+    per_fold = zip(metrics["per_fold_macro_f1"], metrics["per_fold_kappa"], metrics["per_fold_mcc"])
     lines = [
         f"### {name}",
         f"`n_features` = {metrics['n_features']}.",
         "",
-        "| fold | macro F1 |",
-        "|---|---|",
-        *[f"| {k} | {f1:.3f} |" for k, f1 in enumerate(metrics["per_fold_macro_f1"])],
-        f"| **mean** | **{metrics['mean_macro_f1']:.3f} +/- {metrics['std_macro_f1']:.3f}** |",
+        "| fold | macro F1 | kappa | MCC |",
+        "|---|---|---|---|",
+        *[f"| {k} | {f1:.3f} | {kappa:.3f} | {mcc:.3f} |" for k, (f1, kappa, mcc) in enumerate(per_fold)],
+        (f"| **mean** | **{metrics['mean_macro_f1']:.3f} +/- {metrics['std_macro_f1']:.3f}** | "
+         f"**{metrics['mean_kappa']:.3f} +/- {metrics['std_kappa']:.3f}** | "
+         f"**{metrics['mean_mcc']:.3f} +/- {metrics['std_mcc']:.3f}** |"),
         "",
         f"Confusion matrix (rows = true, columns = predicted, summed over {N_SPLITS} folds):",
         "",
@@ -126,8 +129,27 @@ def model_results_section(name: str, metrics: dict) -> list[str]:
     return lines
 
 
+def random_baseline_section(metrics: dict) -> list[str]:
+    return [
+        "## Random-classifier reference",
+        ("`DummyClassifier(strategy=\"uniform\", random_state=0)`, run on the identical "
+        "5-fold splits as the three models above -- a chance-level reference, excluded "
+        "from the Q2 verdict and from the macro-F1 comparison plot."),
+        "",
+        "| metric | mean +/- std |",
+        "|---|---|",
+        f"| macro F1 | {metrics['mean_macro_f1']:.3f} +/- {metrics['std_macro_f1']:.3f} |",
+        f"| kappa | {metrics['mean_kappa']:.3f} +/- {metrics['std_kappa']:.3f} |",
+        f"| MCC | {metrics['mean_mcc']:.3f} +/- {metrics['std_mcc']:.3f} |",
+        "",
+        "Plot: `plots/random_baseline_confusion_matrix.png`.",
+        "",
+    ]
+
+
 def write_readme(
     all_metrics: dict[str, dict],
+    random_metrics: dict,
     config: dict,
     input_counts: dict[str, int],
 ) -> None:
@@ -141,10 +163,14 @@ def write_readme(
         "angle) fed to logistic regression? That was the original framing at grooming. Per "
         "direct user instruction after grooming (2026-09-19), model (1) below was extended "
         "to a third geometric feature, muzzle spread (`muzzle_spread_ratio`), so it no longer "
-        "matches Q2's original two-ratio framing exactly -- see `docs/backlog.md` RSCH-2. "
-        "This run trains three baseline models on cat-emotions-3, plausible rows only, the "
-        "three usable classes (attentive, relaxed, uncomfortable), on identical stratified "
-        "5-fold splits with balanced class weights. Produced by "
+        "matches Q2's original two-ratio framing exactly -- see `docs/backlog.md` RSCH-2. Per "
+        "a second direct user instruction (2026-09-20), the balancing mechanism changed from "
+        "inverse-frequency class weights to random oversampling of minority classes on the "
+        "training folds only (`oversample_to_balance`), and each model now also reports "
+        "Cohen's kappa and MCC alongside macro F1, with a uniform-random classifier run as a "
+        "chance-level reference. This run trains three baseline models on cat-emotions-3, "
+        "plausible rows only, the three usable classes (attentive, relaxed, uncomfortable), "
+        "on identical stratified 5-fold splits. Produced by "
         "`uv run python scripts/make_splits.py` then `uv run python scripts/baselines.py`."),
         "",
         "## Input",
@@ -159,6 +185,8 @@ def write_readme(
     for name in ("ratios_lr", "coords_lr", "mlp"):
         lines += model_results_section(name, all_metrics[name])
 
+    lines += random_baseline_section(random_metrics)
+
     lines += [
         "## Required controls",
         ("- [x] Identical splits across all three models: all three read "
@@ -167,9 +195,13 @@ def write_readme(
         "`catface.ml.cv.cross_validate`."),
         "- [x] Macro F1 reported (not accuracy alone): per-fold and mean +/- std, above.",
         "- [x] Confusion matrix per model: above, summed over folds.",
-        ("- [x] Balanced class weights: `class_weight=\"balanced\"` (LR models), "
-        "`nn.CrossEntropyLoss(weight=...)` computed via "
-        "`sklearn.utils.class_weight.compute_class_weight(\"balanced\", ...)` (MLP)."),
+        ("- [x] Balancing: random oversampling of minority classes on the training folds "
+        "only (`catface.ml.cv.oversample_to_balance`, via `sklearn.utils.resample`), applied "
+        "inside `cross_validate` before each fold's `.fit()`; test folds keep the original "
+        "imbalanced distribution untouched."),
+        "- [x] Cohen's kappa and MCC reported alongside macro F1, per fold and mean +/- std.",
+        ("- [x] Random-classifier reference included: `DummyClassifier(strategy=\"uniform\")` "
+        "on the identical folds, reported separately, excluded from the Q2 verdict."),
         "",
         "## Q2 verdict",
         verdict_sentence,
@@ -214,6 +246,17 @@ def main(argv: list[str]) -> None:
 
     plot_macro_f1_comparison(all_metrics, PLOTS_DIR / "macro_f1_comparison.png")
 
+    print("running random_baseline...")
+    random_metrics = random_baseline.run()
+    random_dir = RUN_DIR / "random_baseline"
+    random_dir.mkdir(parents=True, exist_ok=True)
+    (random_dir / "metrics.json").write_text(json.dumps(random_metrics, indent=2))
+    print(
+        f"  random_baseline: mean macro F1 = {random_metrics['mean_macro_f1']:.3f} "
+        f"+/- {random_metrics['std_macro_f1']:.3f}"
+    )
+    plot_confusion_matrix(random_metrics, PLOTS_DIR / "random_baseline_confusion_matrix.png")
+
     config = {
         "seed": SEED,
         "n_splits": N_SPLITS,
@@ -225,7 +268,7 @@ def main(argv: list[str]) -> None:
     _raw_shapes, label, _split = load_raw_shapes()
     input_counts = label.value_counts().reindex(USABLE_CLASSES).to_dict()
 
-    write_readme(all_metrics, config, input_counts)
+    write_readme(all_metrics, random_metrics, config, input_counts)
     print(f"wrote {RUN_DIR / 'README.md'}")
 
 
