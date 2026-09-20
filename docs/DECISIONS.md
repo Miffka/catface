@@ -6,6 +6,18 @@ was. Newest on top.
 
 ---
 
+## 2026-09-20 — E3's adjacency moved from geometric derivation to a manually-authored file
+
+**Decided:** `src/catface/core/graph.py`'s `build_cat_edges` no longer derives the 48-node anatomical adjacency from angle/distance rules computed on a reference shape. It parses `models/graph_edges_manual.txt`, a hand-authored, hand-reviewed edge list (48 legend lines identifying every node's anatomy, then 78 `(i, j)` edge lines — 76 unique after two duplicate lines dedupe out — covering all 48 node indices). `ring_edges`, `chain_edges`, `nearest_bridge_edges`, `split_muzzle`, and `build_cat_edge_groups` are removed from `core/graph.py`; `edges_to_adjacency` and `normalize_adjacency` are unchanged and still used. `scripts/graph_review_manual.py` (renders the adjacency over each class-mean shape for review) now imports `build_cat_edges` from `core.graph` instead of re-parsing the edge lines itself, per AGENTS.md's "`core` is shared, don't reimplement" rule; it keeps its own legend-label parsing, since the legend is review-only and doesn't belong in `core.graph`.
+
+**Why:** CatFLW publishes no index-to-anatomy map for this 48-point scheme — `core/graph.py`'s own prior docstring called the geometric split "a judgment call, not a validated mapping." That judgment call doesn't go away by writing code instead of a human making it; it just moves who makes it. A human reviewing rendered overlays of the geometric version's edges against each class-mean shape can correct for things a fixed angle/distance rule can't get right: pupil rings and eyelid rings the geometric version conflated into one ring, ear contour edges the geometric chain-builder never drew, and eye-to-nose bridges the geometric bridge-builder didn't produce. The rewritten file is a better source of the same guess, not a different kind of guess.
+
+**Alternative considered:** keep the geometric builder and treat the manual file as a one-time seed to hand-tune from, regenerating it from `build_cat_edge_groups` whenever the reference shape changes. Rejected — checked git history and file mtimes and confirmed no such seeding script exists or ever existed in the working tree; the manual file was typed from scratch by review, not derived from a dumped copy of the geometric output. Keeping the geometric code around unused after that would just leave two sources of truth for the same 48-node graph.
+
+**How to apply:** any change to the adjacency now means editing `models/graph_edges_manual.txt` by hand and re-running `scripts/graph_review_manual.py` to re-render the review PNGs, not touching `core/graph.py`. `core/graph.py` stays a pure parser; it should not grow a new geometric fallback without a matching DECISIONS.md entry explaining why the manual file stopped being sufficient.
+
+---
+
 ## 2026-09-19 — `.gitignore`'s blanket `experiments/` line removed
 
 **Decided:** `.gitignore` no longer ignores `experiments/` wholesale. `experiments/e1/` (README, `plots/`) commits normally, and so will every later `experiments/<run>/` directory.

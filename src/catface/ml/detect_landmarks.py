@@ -21,6 +21,7 @@ from catface.core.geometry import (
     map_points_to_image,
     unletterbox_xyxy,
 )
+from catface.core.graph import Edge, build_cat_edges
 
 ROOT = Path(__file__).resolve().parents[3]
 MIN_SIDE = 32
@@ -72,8 +73,15 @@ def detect_landmarks(image: np.ndarray, box_xyxy: BoxXYXY, landmarks_model: ov.C
     return map_points_to_image(points_norm, crop_box)
 
 
-def draw_overlay(image: np.ndarray, box_xyxy: BoxXYXY, landmarks: np.ndarray) -> np.ndarray:
+def draw_overlay(
+    image: np.ndarray, box_xyxy: BoxXYXY, landmarks: np.ndarray, edges: list[Edge] | None = None
+) -> np.ndarray:
     overlay = image.copy()
+    if edges:
+        for i, j in edges:
+            p1 = tuple(round(v) for v in landmarks[i])
+            p2 = tuple(round(v) for v in landmarks[j])
+            cv2.line(overlay, p1, p2, (255, 255, 0), 1)
     x1, y1, x2, y2 = (round(v) for v in box_xyxy)
     cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), 2)
     for x, y in landmarks:
@@ -85,6 +93,7 @@ def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input_image", type=Path)
     parser.add_argument("output_image", type=Path)
+    parser.add_argument("--edges", action="store_true", help="draw the anatomical adjacency edges (core.graph)")
     args = parser.parse_args(argv)
 
     localizer, landmarks_model = load_models(ROOT / "models" / "manifest.json")
@@ -95,7 +104,8 @@ def main(argv: list[str]) -> None:
 
     box = detect_face_box(image, localizer)
     landmarks = detect_landmarks(image, box, landmarks_model)
-    overlay = draw_overlay(image, box, landmarks)
+    edges = build_cat_edges() if args.edges else None
+    overlay = draw_overlay(image, box, landmarks, edges)
 
     args.output_image.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(args.output_image), overlay)

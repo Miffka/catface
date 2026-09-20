@@ -202,6 +202,8 @@ beat the E2 MLP?
 
 **Stop condition:** none — a random-adjacency tie is the Q1 answer.
 
+**Addendum (direct user instruction, 2026-09-20, overrides the Method line's mechanism above):** the Method line above ("Adjacency hand-written from anatomy in `core/graph.py`") is still true in spirit but the mechanism changed. `core/graph.py` no longer derives edges geometrically from a reference shape — it parses a hand-authored edge list at `models/graph_edges_manual.txt`, itself rewritten by a human reviewing rendered overlays of the earlier geometric version (`scripts/graph_review_manual.py`). Same "a human decided this because CatFLW publishes no index map" rationale, same output shape (76 unique edges over all 48 nodes), different mechanism. See `docs/DECISIONS.md` 2026-09-20 for the full rationale; this note is the record of the divergence, not a rewrite of the Method text above.
+
 ---
 
 ## [research] RSCH-4: E4 — class structure and pose
