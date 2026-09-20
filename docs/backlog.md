@@ -315,6 +315,239 @@ Result: negative, obtained by correct method. The anatomical graph conv does not
 
 **Stop condition:** none.
 
+**Grooming (Research PM, 2026-09-20). Extends the Method above and supersedes the four acceptance criteria below it. The original text stays on the record.**
+
+E4 answers two questions off one run, and one of them carries a measurement problem that has to be settled on paper before anyone writes code. Everything below is pre-registered: bins, metric, thresholds and the expected result are fixed here, before the run, so that no bin edge and no decision rule can be chosen after the numbers are in.
+
+**Questions.** Q3, how much head pose contaminates the prediction. Q4, whether the three classes are separable or some collapse. Either may come back negative or inconclusive, and either such answer closes the issue.
+
+**The degrees problem.** The third original acceptance criterion asks for a verdict shaped "stable under N degrees, degrades past that". Nothing in this repository can produce an N. The only yaw estimator that exists is `pose_confound_proxies` at `scripts/shape_space.py:51-63`, which computes `||muzzle_centroid - right_eye_centroid|| - ||muzzle_centroid - left_eye_centroid||` over Procrustes-aligned shapes. That is a signed, unitless quantity in Frobenius-normalised shape units, not an angle. There is no angular ground truth in CatFLW, in either Roboflow set, or anywhere else on disk, so nothing in the data calibrates the proxy to degrees. E1 already leaned on this same quantity (PC2 tracks it at r = 0.90) and never had to name a unit; E4 does, because the app wants a threshold.
+
+The decision, and it is a methodological term of this experiment rather than a footnote: **degrees come from a weak-perspective geometric model of a bilaterally symmetric face, carrying one stated, unmeasured prior.** Put the eyes symmetric about the midline at `+/- w/2`, `w` the inter-ocular distance measured per row from the aligned shape. Put the muzzle centroid on the midline, below the eye line, displaced toward the camera by a depth `d * w`. Yaw by `theta` about the vertical axis, project weakly (`x -> x cos(theta) + z sin(theta)`), and the two eye-to-muzzle distances differ by
+
+    dist_right^2 - dist_left^2 = -d * w^2 * sin(2 * theta)
+    proxy                      = -d * w^2 * sin(2 * theta) / (dist_right + dist_left)
+
+Every term except `d` is measurable per row from the aligned shape. `d`, nose protrusion depth as a fraction of inter-ocular distance, is the free prior. **It is set to 0.30 and swept +/-50% at 0.15, 0.30 and 0.45.** Nobody measured it; the sweep is what stands in for having measured it.
+
+Two consequences that the ML Engineer must carry into the artifact rather than resolve quietly.
+
+*First, bins are defined in exact proxy units and degrees are a derived, assumption-tagged label.* The sweep moves the third bin edge from 8.7 degrees at `d = 0.45` to 28.3 degrees at `d = 0.15`, a factor of three on the number the acceptance criterion asks for. The verdict's N is therefore reported as a range across the three priors, never as a point. The proxy edge is the number the app actually consumes: `core/states.py` can compute the proxy from landmarks with no angular assumption at all, and the confidence penalty keys on that. **A bare degree figure anywhere in the run, without its `d` and without the range, is a defect and Research QA should treat it as one.**
+
+*Second, the forward model saturates and the data overruns it.* `sin(2 * theta)` is non-monotonic: the proxy rises, saturates near 50 degrees and falls again past it, so one proxy value has two candidate angles and the model cannot choose between them. Report the smaller root and say that is the convention. Worse, the largest `|proxy|` this model can produce at `d = 0.30` is about 0.0315, while `|proxy|` in the real 1967 rows reaches 0.1265. About 90 rows, 4.6%, sit outside anything the model can generate at the central prior. Those rows keep their proxy bin, have their degree reported as ">= theta*" with theta* the saturation angle for that row and prior, are counted in the artifact, and never receive an invented angle. That the proxy exceeds the model's whole range by a factor of four is itself a finding and belongs in `experiments/e4/README.md` in its own right: the proxy is not a yaw meter. It moves under roll, pitch, expression asymmetry and plain landmark error as well, and this run measures how much it moves, not what moved it.
+
+**Bin count is 4, fixed before the run, justified on power.** Equal-count quantile bins on `|proxy|` over all 1967 rows, pooled, not per fold. Quartiles leave 25 / 34 / 26 / 22 `uncomfortable` rows per bin, which is thin but usable. Five bins put at least one (bin x fold) cell at zero `uncomfortable` rows, and a fold-wise spread is undefined once a cell is empty. Three bins leave two interior edges and cannot locate a threshold. Bin on the absolute value: the signed proxy splits 933 negative against 1034 positive, so folding the sign loses nothing, and the sign itself is not identifiable as left-versus-right without ground truth nobody has. The four edges are computed once, written into `experiments/e4/config.json` before any arm is scored, and are what QA re-derives.
+
+**The verdict rests on kappa, with macro F1 beside it.** Accuracy is reported too, because the original criterion names it, but printed next to each bin's own majority-class rate so its emptiness is visible on the page. Class balance in the frozen `data/cache/splits.csv` is attentive 1130 / relaxed 730 / uncomfortable 107, so within any bin accuracy is roughly the majority rate and an arm can gain accuracy by predicting `attentive` harder. This is the same argument my E3 re-grooming made in defect 4, where two chance-level arms were separated on macro F1 and the winner reflected prediction marginals rather than discrimination. Do not repeat it here.
+
+**Model arms.** Four model arms, per user decision: `ratios_lr`, `coords_lr`, `mlp`, `gnn_identity`. Plus `yaw_only_lr` and `random_baseline` as controls. All six on the frozen folds, `oversample=True` on training folds only, test folds untouched, exactly as E2 and E3 ran them.
+
+**Required controls, named now so none is discovered at review time.**
+
+a. *Per-bin class counts and total-variation distance from the overall prior.* This guards against reporting prior shift as pose degradation: if the high-yaw bin holds a different class mix, its kappa moves for reasons that have nothing to do with pose. Measured per-class mean `|proxy|` is attentive 0.0091 / relaxed 0.0095 / uncomfortable 0.0075, so yaw is close to equidistributed across classes and this guard is unlikely to fire hard. It goes in the artifact anyway, as a table, not in a reviewer's head.
+
+b. *The uniform `DummyClassifier`* (`src/catface/ml/random_baseline.py`, as E2 and E3 used it) scored **within each bin, under that bin's own label prior**. A dummy scored once over the pooled rows does not tell you what chance looks like inside bin 3.
+
+c. *A `yaw_only_lr` arm:* logistic regression on `|proxy|` alone, same frozen folds, same oversampling, same LogisticRegression configuration as the other two LR arms. This separates "pose degrades the model" from "pose predicts the label", and a per-bin table on its own cannot tell those apart: if yaw carries label information, per-bin kappa moves without any degradation having occurred. Expect it at chance, which is a clean positive statement about Q3 rather than hand-waving.
+
+d. *Reproduction check.* `metrics.json` in E2 and E3 stores per-fold aggregates and a pooled confusion matrix, no per-row predictions, so every arm has to be re-run to recover out-of-fold predictions per row. That re-run's per-fold macro F1, kappa and MCC are compared against the already-committed `experiments/e2/<arm>/metrics.json` and `experiments/e3/gnn_identity/metrics.json`, and the deltas are recorded in `experiments/e4/config.json`. A hidden mismatch is the defect. A recorded one is not, and if a delta is non-zero the run comment says what drifted.
+
+**Pre-registered decision rules.** These sit here, before the run, because each one is a choice that could otherwise be made after seeing the numbers.
+
+- Verdict metric: kappa.
+- Verdict arm: the highest pooled out-of-fold kappa among the four model arms. Picked by that rule, not by which arm gives the nicer pose story.
+- Degradation rule: the first bin `b >= 1` whose kappa upper CI falls below bin 0's kappa lower CI. That bin's lower proxy edge is the threshold, and its degree range at the three priors is the reported N.
+- Chance gate: if bin 0's kappa CI contains 0, the verdict is **INCONCLUSIVE**. There is no performance for yaw to degrade, and the app takes no pose penalty out of E4. Say so plainly rather than reading a trend out of noise.
+- Prior-shift tolerance: total-variation distance 0.05 between a bin's class distribution and the overall prior. Exceeded in any bin means the verdict is **PROVISIONAL**, with the offending bin named in the verdict sentence.
+- Merge thresholds for Q4: cross-talk `(C[i,j] + C[j,i]) / (n_i + n_j) >= 0.25` **and** the pairwise 2x2 kappa CI contains 0. Both, not either.
+- Uncertainty: bootstrap over rows within each bin, B = 1000, seed 0, percentile interval at 2.5 / 97.5. The five per-fold kappas are a secondary sanity check, not the interval; with 22 to 34 `uncomfortable` rows per bin, five folds give five numbers and no usable spread.
+
+**Q4's merge procedure, by rule and not by eye.** The merge decision comes off the pooled out-of-fold confusion matrix plus an actual re-run under merged labels on the same frozen folds. Nobody eyeballs a matrix and declares two classes the same. All three pairs are candidates. A 2-class kappa is not comparable to a 3-class kappa, so the valid comparison is three 2-class quantities side by side: the post-hoc collapse of the 3-class predictions onto the merged label set, the retrained merged model, and a 2-class uniform dummy under the merged prior. **The merge earns its place only if retrained >= collapsed and both clear the dummy.** If the retrained model does no better than collapsing predictions after the fact, merging bought nothing and the report says so.
+
+**Q4's null path, written in advance.** If every arm sits at chance over three classes, then no pair is *separable*, and an inseparable pair cannot be shown inseparable-but-merge-worthy either, because there is no separation anywhere to contrast it against. The answer is then a reasoned "no merge is warranted on the evidence", which the original fourth acceptance criterion already permits as a negative result. Given E2 and E3 levels, best pooled kappa anywhere in this project is `gnn_identity` at 0.231, this is the likely outcome. The branch exists in writing before the run because otherwise an implementer facing a flat confusion matrix will be tempted to manufacture a merge out of the largest off-diagonal cell.
+
+The Method text above expects trouble telling Scared, Surprised and Angry apart on cat-emotions-7. That set is excluded (`docs/DECISIONS.md` 2026-09-19), so the expectation is **not testable here**. Record it as not testable, do not substitute a different pair for it, and leave it as the prediction to check if that set ever comes back.
+
+**Positive and negative shape, and the stop condition.** A positive Q3 result: bin 0 clears chance, a later bin's kappa CI falls clear of bin 0's, and the run names a proxy edge with its degree range. A negative Q3 result: bin 0 clears chance and no later bin degrades, meaning pose does not contaminate the prediction over the range this dataset covers, and the app applies no penalty. An inconclusive Q3: bin 0 is at chance, the gate fires, nothing can be said. A positive Q4: at least one pair meets both merge thresholds and the retrained merged model beats the collapse and the dummy. A negative Q4: no pair does, and the three classes stay as they are. RSCH-4's stop condition in the plan is **none**, and it stays none. Nothing in this run can halt the research track: a negative or inconclusive answer to either question is the finding, gets written into `docs/MODEL_REPORT.md` under Q3 and Q4, and E5 proceeds against whichever arm carries the highest pooled kappa.
+
+**Constraints.**
+
+- `data/cache/splits.csv` is frozen and is never regenerated. E2, E3 and E4 read the same 1967 rows and the same five folds. `git diff -- data/cache/splits.csv` is empty when the run finishes.
+- E4 writes only under `experiments/e4/`. `experiments/e1`, `experiments/e2` and `experiments/e3` are byte-unchanged afterwards.
+- No new dependency (`AGENTS.md`). In particular **scipy is not declared in `pyproject.toml` and must not be used**: the bootstrap, the quantile edges and the total-variation distance are numpy, and `cohen_kappa_score`, `confusion_matrix`, `LogisticRegression` and `DummyClassifier` already come with the installed scikit-learn.
+- The yaw measurement belongs in `src/catface/core/geometry.py`, alongside `eye_aspect_ratio` and `ear_angle`, as `yaw_asymmetry_proxy(shape, muzzle_indices, left_eye_indices, right_eye_indices) -> float`. The app's future `core/states.py` is its declared consumer and `AGENTS.md` forbids either track keeping a local copy of shared geometry, so it does not go in `ml/` and `scripts/shape_space.py` stops computing its own copy. The degree calibration is a research-track modelling assumption and goes in `src/catface/ml/pose.py` as `yaw_degrees_from_proxy(proxy, shape, d)`, returning the angle and a saturation flag.
+- Within-dataset near-duplicates were never hashed, so absolute per-bin numbers are an upper bound; it inflates every arm and every bin equally and so does not tilt the per-bin comparison. One line in the README, as E3 carried it.
+
+**Expected shape of the result,** recorded before the run so the ML Engineer cannot be accused of writing the conclusion afterwards. I expect `gnn_identity` to carry the verdict at pooled kappa near 0.23, the other three arms below it, and `yaw_only_lr` at chance. I expect bin 0's kappa CI to clear 0 for `gnn_identity` and quite possibly not for `ratios_lr`. I expect no bin to degrade cleanly, because with 22 to 34 `uncomfortable` rows per bin the CIs will be wide enough to overlap, and so I expect Q3 to come back "no measurable degradation over the yaw range this dataset covers, threshold not locatable at this sample size" rather than a crisp N. On Q4 I expect no pair to clear both merge thresholds and the answer to be no merge. If the run lands somewhere else, the run is right and this paragraph is wrong.
+
+**Revised acceptance criteria.** These supersede the four above.
+
+- [ ] `yaw_asymmetry_proxy` lives in `src/catface/core/geometry.py`, `scripts/shape_space.py` imports it instead of recomputing it, and no copy of the formula survives in `ml/` or `scripts/`
+- [ ] Degree calibration in `src/catface/ml/pose.py`, the weak-perspective model written out in the docstring with `d` named as an unmeasured prior
+- [ ] Four equal-count quantile bins on `|proxy|` over all 1967 rows; edges in exact proxy units committed to `experiments/e4/config.json` before any arm is scored
+- [ ] Every reported degree figure carries its `d` and the full 0.15 / 0.30 / 0.45 range; no bare degree anywhere in the run
+- [ ] Saturation handled: count and fraction of rows whose `|proxy|` exceeds the model's range reported per prior, those rows labelled ">= theta*", no invented angles
+- [ ] The proxy-exceeds-model-range finding written up in `experiments/e4/README.md` as a result, with the confounds named (roll, pitch, expression asymmetry, landmark error)
+- [ ] Six arms on the frozen folds: `ratios_lr`, `coords_lr`, `mlp`, `gnn_identity`, `yaw_only_lr`, `random_baseline`; `oversample=True` on training folds only
+- [ ] Per-bin table: kappa with bootstrap CI, macro F1, accuracy printed beside that bin's majority-class rate, and n per class
+- [ ] Control (a): per-bin class counts and TV distance from the overall prior, in the artifact
+- [ ] Control (b): uniform `DummyClassifier` scored within each bin under that bin's own prior
+- [ ] Control (c): `yaw_only_lr` reported at the same detail as the model arms, not as a footnote
+- [ ] Control (d): per-fold metrics for the re-run arms compared against the committed E2/E3 `metrics.json`, deltas recorded in `experiments/e4/config.json`
+- [ ] Bootstrap as specified: within-bin over rows, B = 1000, seed 0, 2.5 / 97.5 percentile; per-fold kappas reported alongside as the sanity check
+- [ ] Q3 verdict applies the pre-registered degradation rule, chance gate and prior-shift tolerance by name, and states which one fired
+- [ ] Pose verdict sentence gives the proxy edge first and the degree range second, or states explicitly that no threshold is locatable
+- [ ] Q4: pooled out-of-fold confusion matrix, cross-talk and pairwise 2x2 kappa CI computed for all three pairs against the pre-registered thresholds
+- [ ] Q4: if any pair clears both thresholds, the merged model is actually retrained on the same frozen folds and compared against both the post-hoc collapse and a 2-class dummy; merge accepted only if retrained >= collapsed and both clear the dummy
+- [ ] Q4: if no pair clears, the null path is taken and written as a reasoned "no merge warranted on the evidence"
+- [ ] The cat-emotions-7 Scared/Surprised/Angry expectation recorded as not testable here, with the DECISIONS reference
+- [ ] Q3 and Q4 each answered explicitly in the run comment, negative or inconclusive answers included and labelled as such
+- [ ] `experiments/e4/config.json`, `README.md` and per-arm `metrics.json` committed with the git sha; `experiments/e1`, `e2`, `e3` byte-unchanged; `git diff -- data/cache/splits.csv` empty
+- [ ] No new dependency; no scipy import anywhere in the run
+- [ ] Within-dataset near-duplicate caveat carried in the README as an upper-bound note
+
+**Stop condition:** unchanged, none, and none can fire. Negative and inconclusive are both closeable outcomes here.
+
+**Second grooming pass (Research PM, 2026-09-20). Supersedes the yaw estimator of the first pass above and nothing else. Bin count 4, the verdict on kappa, controls (a) through (d), the pre-registered decision rules, Q4's merge procedure and null path, the expected-shape paragraph and the constraints all stand as written. The superseded text stays on the record, the way RSCH-3 kept its first run's.**
+
+**What changed.** `models/graph_edge_schemes/graph_edges_manual_v3.txt` carries a header legend naming every one of the 48 node positions. A human hand-authored it while reviewing rendered overlays for E3. The project's standing assumption, repeated in RSCH-2's grooming notes and in `docs/DECISIONS.md`, that nobody publishes an index-to-anatomy map and `MUZZLE` is defined only by exclusion, is true of CatFLW and false of this repository. The first pass built its whole degrees section on a 22-point muzzle centroid against two 8-point eye centroids, because that was all the available index groups allowed. The map replaces both blunt instruments with named points whose 3D geometry can be reasoned about, and the estimator changes accordingly.
+
+Four points lie on the sagittal plane: **16** nose philtrum, **17** mouth top, **0** mouth, **2** mouth chin. Twenty-one bilateral pairs are named left/right: eyelid outside 4/8, eyelid inside 5/9, eyelid top 6/10, eyelid bottom 7/11, pupil bottom 3/1, pupil outside 36/41, pupil inside 37/40, pupil top 38/39, nose top 12/13, nostril middle 14/15, nostril bottom 44/45, mouth corner 20/18, muzzle middle 33/34, muzzle outside 46/47, whisker pad outside 32/35, whisker pad middle 42/43, ear bottom-outside 22/31, ear middle-outside 23/30, ear top 24/29, ear middle-inside 25/28, ear bottom-inside 26/27. (Nodes 19 and 21 are named `right_muzzle, cheek, right` and `left_muzzle, bottom`; they are not a matched pair and this experiment does not use them.)
+
+**Axis convention and projection model, stated once and used throughout.** Right-handed world coordinates: `x` to the image right, `y` up, `z` toward the camera. Yaw is rotation by `theta` about the vertical axis `y`. Projection is weak perspective, orthographic plus a uniform scale, so a world point `(x, y, z)` lands at `u = x*cos(theta) + z*sin(theta)`, `v = y`. All of it runs on the GPA-aligned stack, the same `generalized_procrustes` output E1 uses, so in-plane roll is already removed and the shapes share a frame. Pitch is not modelled and not removed, and that is a stated limitation of every estimator below.
+
+### Family 1, foreshortening. Primary.
+
+Put a bilateral pair at `(+/-a, y0, z0)` with `w = 2a` its frontal span. Projected, the two points land at `u = +/-a*cos(theta) + z0*sin(theta)`, so the **observed span is `w*|cos(theta)|` and the pair's own depth `z0` cancels**: yaw shifts both members of a pair equally, and the shift drops out of the difference. A vertical span between any two points is `|delta_y|`, untouched by a rotation about the vertical axis. Therefore
+
+    w_obs / v_obs = r_frontal * |cos(theta)|
+    theta         = arccos( (w_obs / v_obs) / r_frontal )
+
+**This needs no depth prior at all.** That is why it is primary. The first pass's weakest term, an invented nose-protrusion constant swept +/-50% and moving the reported threshold by a factor of three, is gone rather than narrowed.
+
+*Spans, fixed here.* `w_obs = |u_4 - u_8|`, the outer eye corners (eyelid outside, left and right). Picked over pupil outside 36/41 because pupil landmarks move with gaze direction and pupil dilation while the outer canthus is skeletally anchored, and picked over anything on the ears because E1 measured PC1 tracking ear position at r = 0.84 and an ear-based span would import that confound wholesale. `v_obs = |v_2 - (v_4 + v_8)/2|`, chin to the midpoint of the outer eye corners. Yaw-invariant by construction, since it is a pure `y` difference.
+
+*The `r_frontal` rule, fixed before the run.* Yaw only ever shrinks `w_obs/v_obs`, never grows it, so the population's frontal value sits at the top of the observed distribution. The maximum is the wrong statistic, being the single noisiest order statistic and the one landmark error reaches first. **Pre-registered: `r_frontal` is the 95th percentile of `w_obs/v_obs` over all 1967 rows of the frozen splits, pooled, computed once, written into `experiments/e4/config.json` before any arm is scored.** The sensitivity analysis is a sweep at the 90th and 99th percentiles, reported the way the first pass's `d` sweep would have been. That sweep is over an empirical quantile of measured data rather than over a constant nobody measured, which is the whole point of the change.
+
+*Costs, stated rather than discovered.*
+
+- **Unsigned.** `cos` is even, so family 1 cannot tell a left turn from a right turn. This costs nothing for the binning, because the first pass already binned on magnitude and the app's confidence penalty is direction-agnostic. Sign comes from family 2.
+- **Confounded with facial width.** A genuinely narrow-faced cat photographed head-on reads as yawed. Breed is not labelled in cat-emotions-3, and with one photo per cat and no identity labels a per-row `r_frontal` is not estimable, so a single population value has to absorb real brachycephalic-to-dolichocephalic variation. A Persian and a Siamese differ in `w/v` at zero yaw. This confound cannot be removed at this sample size and belongs in `experiments/e4/README.md` and in `docs/MODEL_REPORT.md` under Q3 as a limitation, not as a caveat sentence in a footnote.
+- **Out-of-domain rows.** Rows with `w_obs/v_obs > r_frontal` give `cos(theta) > 1`. At the 95th percentile roughly 5% of rows do this by construction. They clamp to `theta = 0`, land in bin 0, and are counted and reported per percentile setting. This replaces the first pass's saturation machinery.
+- **Monotonic, so the saturation problem is gone.** `cos` is strictly decreasing on `[0, 90]` degrees, so the inverse is single-valued over the entire usable range. The first pass's non-monotonic `sin(2*theta)`, its two candidate roots, its smaller-root convention and its `">= theta*"` labelling are all struck. Nothing saturates.
+
+### Family 2, midline offset. Secondary, carries the sign.
+
+For a midline point `M` at `(0, y_M, z_M)` and a bilateral pair `(L, R)` at depth `z0`:
+
+    s = ( u_M - (u_L + u_R)/2 ) / (u_R - u_L)
+      = ( (z_M - z0) / w ) * tan(theta)
+
+The pair's midpoint moves to `z0*sin(theta)` and the midline point to `z_M*sin(theta)`, so the numerator is `(z_M - z0)*sin(theta)`; the denominator is `w*cos(theta)`, which cancels the foreshortening automatically. Write `d_rel = (z_M - z0)/w`, the midline point's depth relative to the pair's plane in units of the pair's span. Then `s = d_rel * tan(theta)`: **signed, monotonic over the full range, no saturation, no second root.** Even as a standalone this is better behaved than the E1 centroid proxy it replaces, which went as `sin(2*theta)` and turned over.
+
+Primary midline point **16**, the nose philtrum: the most protruding sagittal point, so the largest `d_rel` and the largest signal. Pair `(4, 8)`, the same outer eye corners family 1 uses, so the two families share a frame. Sign convention: positive `s` means the philtrum sits toward `+u` relative to the eye-corner midpoint; which physical turn that is follows from the sign of `d_rel`, and the run fixes it by requiring `d_rel(16) > 0` and states the resulting left/right mapping in the README.
+
+Node **2**, the chin, runs as a near-zero-depth control: it sits close to the eye-corner plane, so its implied `d_rel` should come out far smaller in magnitude than the philtrum's. That is a falsifiable prediction of the geometry and it costs one extra column.
+
+### The combination, and the internal control that replaces the sweep
+
+Family 1 gives `theta` with no depth prior. Family 2 gives `s`. Together, per row,
+
+    d_rel = s / tan(theta)
+
+so **the depth term stops being an invented constant and becomes a measured, per-row quantity with a distribution over 1967 rows.** Its median and spread go in the report as a result in their own right. That is the substantive gain from the node map, and it is what the first pass's `+/-50%` sweep was standing in for.
+
+The same relation is the internal control. If both families measure yaw, `|s|` plotted against `tan(theta)` is a straight line through the origin whose slope is the population `d_rel`. **Pre-registered: Spearman `rho` between `|s|` and `tan(theta)` over all 1967 rows, with a bootstrap CI at B = 1000, seed 0, matching the rest of this experiment's uncertainty rule. `rho >= 0.5` means the two agree well enough to call the binning quantity yaw. `rho < 0.3` means the yaw label is not earned, and Q3's verdict is then reported against the binning quantity under its operational name, the foreshortening ratio, with no degree figure attached at all.** Between 0.3 and 0.5, report both and say the label is weakly supported. This is an estimator-versus-estimator measurement, which is evidence, where the first pass had a sensitivity analysis over an assumption, which is not.
+
+### Family 3, considered and rejected
+
+*Mirror-Procrustes residual.* Swap all 21 bilateral pairs, align the relabelled shape to the original, read the residual. Rejected: the residual is one non-negative scalar mixing yaw with expression asymmetry, one ear forward, and landmark error, with no way to decompose it. It is less interpretable than family 1 and unsigned like family 1, without family 1's freedom from a depth prior. The one useful by-product, the pair-swap permutation itself, is required anyway as a committed constant.
+
+*Per-row least-squares fit of `theta` against all pairs at once.* This is family 1 generalised, and it would be right if a 3D reference cat existed. None does. Fitting against 21 pairs needs 21 frontal spans, each carrying the same population-versus-individual width confound, so the extra statistical precision buys nothing against a shared systematic error that dominates it. Rejected as cost without return at n = 1967, and recorded as the obvious upgrade if a 3D model ever lands.
+
+### The E1 centroid proxy, kept as a named legacy quantity
+
+`pose_confound_proxies`' head-yaw term, `||muzzle_centroid - right_eye_centroid|| - ||muzzle_centroid - left_eye_centroid||`, moves to `core/geometry.py` as `yaw_centroid_proxy(shapes)` and is **reported alongside the new estimators in the per-row artifact and correlated against `theta`**, so E1's finding that PC2 tracks it at r = 0.90 stays connected to E4's. It is not the binning quantity and no bin edge is computed from it. It must reproduce E1's array bit-for-bit, in the same summation order, and E1's r = 0.90 is re-derived and stated to match.
+
+### Numbers from the first pass that are now stale
+
+Every figure in the first pass's degrees section was measured against the centroid proxy and pertains to a different quantity. Struck as inputs to this run, and carried only where they justify the change of estimator:
+
+- **8.7 to 28.3 degrees** for the third bin edge under the `+/-50%` `d` sweep: struck. There is no `d` sweep.
+- **Saturation near 50 degrees**, the two candidate roots, the smaller-root convention, the `">= theta*"` labelling: struck. Family 1 is monotonic.
+- **`|proxy|` reaching 0.1265 against a model maximum of ~0.0315, and ~90 rows (4.6%) beyond the model's range**: retained **only** as measurements on the superseded centroid proxy, and only because they are the evidence that the centroid proxy is not a yaw meter, which is why the estimator changed. Not inputs to any bin, any threshold or any verdict here.
+- **Per-class mean `|proxy|` 0.0091 / 0.0095 / 0.0075**: stale. Control (a) is recomputed against `theta`.
+- **Quartile occupancy 25 / 34 / 26 / 22 `uncomfortable` rows per bin**: stale, because occupancy depends on which quantity is being quantiled. See the restated bin argument below.
+- **Signed split 933 negative / 1034 positive**: stale, and its accompanying argument is now wrong rather than merely stale. The first pass said the sign is not identifiable as left-versus-right without ground truth. With a named midline point it is. Binning still happens on magnitude, for the different and better reason that family 1 produces a magnitude and the app's penalty is direction-agnostic; family 2's left/right split is reported separately as a balance check.
+
+**All bin edges are quantiles of `theta` computed at run time over all 1967 rows, pooled, and frozen into `experiments/e4/config.json` before any arm is scored.** No edge in this issue is a number. I cannot measure one without touching data and I am not going to carry one forward that was measured on a different quantity.
+
+### Bin count of 4, restated without the old occupancy numbers
+
+The argument was always about `uncomfortable` counts per cell and it survives the change of estimator, but it must not read as resting on edges measured against the centroid proxy. Restated: quartiles put roughly 492 of the 1967 rows in each bin, and `uncomfortable` is 107 rows, so if `uncomfortable` is close to uniform over the binning quantity each bin holds about 27 of them and each (bin x fold) cell about 5. Five bins drop that to about 21 per bin and about 4 per cell, where a single empty cell makes the fold-wise spread undefined. Three bins leave two interior edges and cannot locate a threshold. Four it is.
+
+Because I can no longer assert the occupancy from measurement, one pre-registered fallback: **the run computes per-bin and per-(bin x fold) `uncomfortable` counts immediately after freezing the edges, before scoring any arm. If any (bin x fold) cell holds zero `uncomfortable` rows at 4 bins, the run drops to 3 bins, records both occupancy tables in `config.json`, and says so in the run comment.** Decided here so it is not decided after seeing a kappa.
+
+### Code placement, and vectorisation
+
+`src/catface/core/geometry.py`, because `core/states.py` is the declared consumer and `AGENTS.md` forbids either track keeping a local copy of shared geometry:
+
+- `BILATERAL_PAIRS`, the 21 pairs above, and `MIDLINE_POINTS`, `(16, 17, 0, 2)`, as module constants, sourced from the v3 legend with the file named in the docstring
+- `yaw_foreshortening_ratio(shapes) -> (N,)`, the `w_obs / v_obs` of family 1
+- `yaw_midline_offset(shapes, midline_index=16, pair=(4, 8)) -> (N,)`, the signed `s` of family 2
+- `yaw_centroid_proxy(shapes) -> (N,)`, the legacy quantity
+
+`src/catface/ml/pose.py`, because the percentile rule and the degree label are research-track modelling choices and the app consumes the ratio, not the angle:
+
+- `frontal_ratio(ratios, percentile=95.0) -> float`
+- `yaw_degrees(ratios, r_frontal) -> (N,), (N,) bool`, angles plus an out-of-domain mask for the clamped rows
+
+**Every one of these takes `(N, 48, 2)` and returns arrays, not a per-shape scalar.** `scripts/shape_space.py` computes E1's proxy over the whole stack, and a per-shape loop risks a different summation order against a published number. Single-shape callers index `[None]`. This supersedes the first pass's `yaw_asymmetry_proxy(shape, ...)` signature, which was per-shape.
+
+The first pass's `yaw_degrees_from_proxy(proxy, shape, d)` is struck along with the depth prior it took.
+
+### On the algebra, checked term by term
+
+The first pass derived `dist_right^2 - dist_left^2 = -d * w^2 * sin(2*theta)` for the centroid proxy. Under the convention stated above, with eyes at `(+/-a, 0, 0)`, a midline point at `(0, -h, z_M)` and `w = 2a`, the difference of squared distances is `-2*a*z_M*sin(2*theta) = -w*z_M*sin(2*theta)`. Both forms are the same equation under different readings of `d`: with `d` an absolute depth it is `-w*d*sin(2*theta)`, and with `d` the dimensionless fraction `z_M/w` that the first pass defined, substituting `z_M = d*w` gives `-w^2*d*sin(2*theta)`, which is `length^2` as required. I verified all three relations in this section numerically before writing them, by projecting synthetic points and comparing against the closed forms; family 1's span independence of `z0` and family 2's `d_rel * tan(theta)` both hold exactly. The convention, not the derivation, was what the first pass left unstated, and it is stated now.
+
+### Acceptance criteria: replacements
+
+These five checkboxes in the first pass are **struck**: the `yaw_asymmetry_proxy` placement one, the degree-calibration-with-`d` one, the "four equal-count quantile bins on `|proxy|`" one, the "every degree figure carries its `d` and the 0.15 / 0.30 / 0.45 range" one, and the saturation one. The proxy-exceeds-model-range criterion is **amended** to read as a finding about the superseded centroid proxy explaining the estimator change. Every other checkbox in the first pass stands. Replacing them:
+
+- [ ] `BILATERAL_PAIRS` and `MIDLINE_POINTS` committed as constants in `src/catface/core/geometry.py`, sourced from the v3 legend, that file named in the docstring
+- [ ] `yaw_foreshortening_ratio`, `yaw_midline_offset` and `yaw_centroid_proxy` in `core/geometry.py`, each vectorised over `(N, 48, 2)`; `frontal_ratio` and `yaw_degrees` in `src/catface/ml/pose.py`; no copy of any of these formulas surviving in `ml/` or `scripts/`
+- [ ] `scripts/shape_space.py` imports `yaw_centroid_proxy` instead of computing it inline, the array is bit-identical to the current inline result, and E1's r = 0.90 against PC2 is re-derived and stated to match; `experiments/e1` byte-unchanged
+- [ ] Axis convention and projection model written out in the `core/geometry.py` docstring in the form stated above
+- [ ] `r_frontal` computed as the 95th percentile of `w_obs / v_obs` over all 1967 rows, frozen into `experiments/e4/config.json` before any arm is scored, with the 90th and 99th percentile sweep reported
+- [ ] Out-of-domain rows (`w_obs / v_obs > r_frontal`) counted and reported per percentile setting, clamped to `theta = 0`, no invented angles
+- [ ] Four quantile bins computed on `theta` at run time, edges frozen into `config.json` before scoring; per-bin and per-(bin x fold) `uncomfortable` occupancy recorded at that moment, and the 3-bin fallback taken and declared if any cell is empty
+- [ ] Internal control: Spearman `rho` between `|s|` and `tan(theta)` over all 1967 rows with a bootstrap CI (B = 1000, seed 0), reported against the pre-registered 0.5 / 0.3 thresholds, and the verdict's use of the word "yaw" justified by it or withdrawn
+- [ ] Per-row `d_rel = s / tan(theta)` distribution reported (median and spread), and the chin control's `d_rel(2)` shown to be far smaller in magnitude than `d_rel(16)` or the discrepancy explained
+- [ ] `yaw_centroid_proxy` reported alongside the new estimators and correlated against `theta`, so E1's PC2 finding stays connected to E4's
+- [ ] Family 2's left/right sign split reported as a balance check, with the sign-to-turn-direction mapping stated
+- [ ] Facial-width confound (brachycephalic versus dolichocephalic, no breed or identity labels, no per-row `r_frontal`) and the unmodelled pitch stated as limitations in `experiments/e4/README.md` and carried into `docs/MODEL_REPORT.md` under Q3
+- [ ] Every degree figure in the run carries the percentile that produced it and the 90th/99th range; a bare degree figure is still a defect
+- [ ] Pose verdict sentence gives the foreshortening-ratio edge first and the degree range second, or states that no threshold is locatable. This restates the first pass's criterion against the new quantity: the ratio is what `core/states.py` consumes, computable from landmarks with no modelling assumption at all
+- [ ] Rejected estimator families recorded in the README with the reason, so the choice is on the record rather than implied
+
+**Stop condition:** still none, and still nothing here can fire one. Negative and inconclusive remain closeable outcomes for both questions.
+
+**Comment (ML Engineer, 2026-09-20):** implemented the second grooming pass's method and ran it, `experiments/e4/`. Six arms on the frozen `data/cache/splits.csv`, 1967 rows, five folds, `oversample=True` on training folds only, each arm scored inside four quantile bins of the foreshortening estimator. Pooled out-of-fold kappa: `gnn_identity` 0.231 (CI 0.193 to 0.267), `coords_lr` 0.174, `mlp` 0.155, `ratios_lr` 0.154, `yaw_only_lr` 0.041, `random_baseline` 0.017. The pre-registered rule picks `gnn_identity` as the verdict arm. Per-bin tables, per-fold numbers, both verdict texts and the limitations are in `experiments/e4/README.md`; per-arm `metrics.json`, `config.json`, `merge.json` and `per_row.csv` sit beside it.
+
+**Q3: NEGATIVE, and PROVISIONAL.** Bin 0 clears chance at kappa 0.191 (CI 0.132 to 0.247), so the chance gate did not fire. No bin b >= 1 has a kappa upper CI below bin 0's lower CI, so the degradation rule did not fire either: no measurable degradation across the range this dataset covers, no threshold locatable at this sample size, no pose penalty for the app. The prior-shift tolerance is exceeded at bin 0, TV 0.064 against the pre-registered 0.05, which makes the verdict PROVISIONAL and names the reference bin itself as the offender: 44 of the 107 `uncomfortable` rows sit in the most frontal bin. Control (c) says pose barely predicts the label on its own, `yaw_only_lr` at 0.041 against the dummy's 0.017, so the flat per-bin profile is not yaw carrying label information.
+
+**Q4: NEGATIVE, no merge warranted on the evidence.** Cross-talk, then pairwise 2x2 kappa with its CI, over the pooled confusion matrix: attentive/relaxed 0.298, kappa 0.262 (0.213 to 0.310); attentive/uncomfortable 0.128, kappa 0.333 (0.260 to 0.412); relaxed/uncomfortable 0.192, kappa 0.240 (0.151 to 0.321). Every pair fails at least one threshold, and all three CIs exclude 0, so the three classes are separable enough that no merge is defensible. I retrained the highest cross-talk pair anyway, attentive/relaxed, so the null path rests on a measurement: retraining scores 0.148 against 0.190 for collapsing the 3-class predictions after the fact, with the 2-class dummy at 0.021. Merging loses to not merging. The cat-emotions-7 Scared/Surprised/Angry expectation is recorded as not testable here, `docs/DECISIONS.md` 2026-09-19, and no other pair is substituted for it.
+
+**The internal control, and the part of the method that did not survive the data.** Spearman rho between family 2's |s| and family 1's tan(theta) is 0.106, CI 0.062 to 0.149, well under the pre-registered 0.3. The yaw label is not earned, so the verdict names the foreshortening ratio and carries no degree figure anywhere. Three measurements agree on why. The chin control fails its falsifiable prediction: node 2 sits near the eye-corner plane and should imply a far smaller depth than the philtrum, but its median `d_rel` comes out at 0.87 of the philtrum's, 0.0449 against 0.0517. The legacy centroid proxy correlates with the new theta at r = -0.067, so E1's quantity and this one are unrelated too. And the montage shows it in pictures. The synthetic round trip in `tests/test_pose.py` recovers a known rotation to 0.01 degrees through the real `procrustes_align` and `yaw_degrees`, and puts the chin below 1% of a built-in 0.30, so the estimators do what the geometry says; the photographs are not the geometry. The likeliest single cause is the facial-width confound the grooming named: family 1 divides a bilateral span by a vertical one, and breed varies more than pose does here.
+
+**What the montage showed** (`experiments/e4/yaw_extremes_manual_review.png`, looked at before I wrote the README). Two of the three most-negative-`s` rows are detector failures: in one, point 4 lands on one cat's eye and point 8 on a second cat's eye in the same photo, and in the next the 48 points spread across three kittens in a basket. Both passed E0's plausibility filter. The readable extremes do carry the sign, and I read the mapping off them rather than off the algebra: positive `s` means the head is turned toward the image left, the cat's own right. The near-zero panels are where family 1 comes apart, with a black cat facing the camera square on assigned 38.9 degrees, above the median of the whole dataset, because its face is narrow relative to its chin-to-eye span.
+
+**Controls and constraints.** Control (a) per-bin class counts and TV are in the README and `config.json`. Control (b) scores the uniform dummy inside each bin under that bin's own prior, and it sits at chance in all four. Control (d): all five checkable arms reproduce E2's and E3's committed per-fold macro F1, kappa and MCC bit-for-bit, `max_abs_delta` 0.0 each, recorded in `config.json`. One thing to flag for QA: an earlier execution of the same script at the same commit reproduced `mlp` in four folds of five, with fold 0 off by 0.0153 of kappa, so torch CPU training here is not bit-reproducible between executions. Every artifact in the directory comes from one execution. The 3-bin fallback did not fire; the smallest (bin x fold) `uncomfortable` cell holds 2 rows and none is empty. Bin edges and `r_frontal` were frozen into `config.json` before any arm was scored, and both verdict functions were committed in `src/catface/ml/scoring.py` before the run produced a metric, so `git log` can check that rather than taking it on trust. `git diff -- data/cache/splits.csv` is empty, `experiments/e1`, `e2` and `e3` are byte-unchanged, no new dependency and no scipy anywhere: the Spearman is Pearson on average ranks in `ml/pose.py`, tested against a hand-computed case with a tie. `uv run pytest` green, 69 passed.
+
+One observation the pre-registered rule does not capture, recorded so nobody finds it later and over-reads it. `ratios_lr` is the only arm whose per-bin kappa declines monotonically, 0.231 to 0.182 to 0.107 to 0.085, and its three features are geometric ratios of the same kind as the binning quantity. Shared measurement is a better reading of that than pose, and its CIs overlap throughout, which is why the degradation rule did not fire on it. It is also not the verdict arm.
+
+Not closing this issue, and I have not ticked the acceptance criteria. That is Research QA's call and then the orchestrator's.
+
 ---
 
 ## [research] RSCH-5: E5 — my cat
