@@ -11,16 +11,23 @@ needed them.
 
 import numpy as np
 
-from catface.core.geometry import BoxXYXY, expand_box
+from catface.core.geometry import (  # noqa: F401 -- re-exported, see below
+    EAR,
+    EYE,
+    LEFT_EAR,
+    LEFT_EYE,
+    MUZZLE,
+    RIGHT_EAR,
+    RIGHT_EYE,
+    BoxXYXY,
+    expand_box,
+)
 from catface.ml.detect_landmarks import LANDMARK_MARGIN
 
-LEFT_EYE = (3, 4, 5, 6, 7, 36, 37, 38)
-RIGHT_EYE = (1, 8, 9, 10, 11, 39, 40, 41)
-EYE = LEFT_EYE + RIGHT_EYE
-LEFT_EAR = (22, 23, 24, 25, 26)
-RIGHT_EAR = (27, 28, 29, 30, 31)
-EAR = LEFT_EAR + RIGHT_EAR
-MUZZLE = tuple(i for i in range(48) if i not in EYE and i not in EAR)
+# The index groups moved to core.geometry at E4, where the yaw estimators and
+# the app's core/states.py both need them and AGENTS.md forbids a second copy.
+# They are re-exported here because this module is where they were derived and
+# where every existing caller imports them from.
 
 INSIDE_BOX_TOLERANCE = 0.15
 MIN_SPREAD_FRACTION = 0.05

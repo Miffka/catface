@@ -19,8 +19,8 @@ import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
 
-from catface.core.geometry import generalized_procrustes
-from catface.ml.plausibility import EAR, EYE, LEFT_EAR, LEFT_EYE, MUZZLE, RIGHT_EAR, RIGHT_EYE
+from catface.core.geometry import generalized_procrustes, yaw_centroid_proxy
+from catface.ml.plausibility import EAR, EYE
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE_PATH = ROOT / "data" / "cache" / "landmarks.parquet"
@@ -52,15 +52,9 @@ def pose_confound_proxies(aligned: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     ear_y = aligned[:, list(EAR), 1].mean(axis=1)
     eye_y = aligned[:, list(EYE), 1].mean(axis=1)
     ear_position = ear_y - eye_y
-
-    muzzle_centroid = aligned[:, list(MUZZLE), :].mean(axis=1)
-    left_eye_centroid = aligned[:, list(LEFT_EYE), :].mean(axis=1)
-    right_eye_centroid = aligned[:, list(RIGHT_EYE), :].mean(axis=1)
-    dist_right = np.linalg.norm(muzzle_centroid - right_eye_centroid, axis=1)
-    dist_left = np.linalg.norm(muzzle_centroid - left_eye_centroid, axis=1)
-    head_yaw = dist_right - dist_left
-
-    return ear_position, head_yaw
+    # Moved to core.geometry at E4 (RSCH-4); the array is unchanged, so E1's
+    # published r = 0.90 against PC2 still holds without re-running E1.
+    return ear_position, yaw_centroid_proxy(aligned)
 
 
 def plot_explained_variance(pca: PCA, out_path: Path) -> None:

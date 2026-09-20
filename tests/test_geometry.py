@@ -1,6 +1,11 @@
 import numpy as np
 
 from catface.core.geometry import (
+    BILATERAL_PAIRS,
+    LEFT_EYE,
+    MIDLINE_POINTS,
+    MUZZLE,
+    RIGHT_EYE,
     crop_and_resize,
     ear_angle,
     expand_box,
@@ -11,6 +16,9 @@ from catface.core.geometry import (
     muzzle_spread_ratio,
     procrustes_align,
     unletterbox_xyxy,
+    yaw_centroid_proxy,
+    yaw_foreshortening_ratio,
+    yaw_midline_offset,
 )
 
 
@@ -187,3 +195,57 @@ def test_muzzle_spread_ratio_known_values():
         _MUZZLE_SHAPE, _MUZZLE_INDICES, _LEFT_EYE_CENTER, _RIGHT_EYE_CENTER
     )
     assert np.isclose(ratio, 1.5)
+
+
+# --- E4 yaw estimators (RSCH-4) ---------------------------------------------
+
+_YAW_RNG = np.random.default_rng(7)
+_YAW_SHAPES = _YAW_RNG.normal(size=(9, 48, 2))
+
+
+def test_yaw_estimators_are_vectorised_over_the_stack():
+    for values in (
+        yaw_foreshortening_ratio(_YAW_SHAPES),
+        yaw_midline_offset(_YAW_SHAPES),
+        yaw_centroid_proxy(_YAW_SHAPES),
+    ):
+        assert values.shape == (len(_YAW_SHAPES),)
+
+    # Per-row: each row's value depends on that row alone.
+    single = yaw_foreshortening_ratio(_YAW_SHAPES[3][None])
+    assert np.isclose(single[0], yaw_foreshortening_ratio(_YAW_SHAPES)[3])
+
+
+def test_yaw_estimators_are_invariant_under_in_plane_rotation():
+    """GPA aligns each shape to the *mean*, so a row's ocular axis is only
+    approximately horizontal. Both estimators must be indifferent to the
+    residual roll, which is why they project onto the pair's own axis."""
+    theta = np.radians(23)
+    rot = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+    rotated = _YAW_SHAPES @ rot.T
+
+    assert np.allclose(yaw_foreshortening_ratio(rotated), yaw_foreshortening_ratio(_YAW_SHAPES))
+    assert np.allclose(yaw_midline_offset(rotated), yaw_midline_offset(_YAW_SHAPES))
+
+
+def test_yaw_centroid_proxy_matches_e1s_inline_formula_bit_for_bit():
+    """E1 is not re-run: `experiments/e1` stays byte-unchanged, so the
+    refactored array has to equal the inline computation
+    `scripts/shape_space.py` published, in the same summation order."""
+    muzzle_centroid = _YAW_SHAPES[:, list(MUZZLE), :].mean(axis=1)
+    left_eye_centroid = _YAW_SHAPES[:, list(LEFT_EYE), :].mean(axis=1)
+    right_eye_centroid = _YAW_SHAPES[:, list(RIGHT_EYE), :].mean(axis=1)
+    dist_right = np.linalg.norm(muzzle_centroid - right_eye_centroid, axis=1)
+    dist_left = np.linalg.norm(muzzle_centroid - left_eye_centroid, axis=1)
+
+    assert np.array_equal(yaw_centroid_proxy(_YAW_SHAPES), dist_right - dist_left)
+
+
+def test_bilateral_pairs_and_midline_points_are_disjoint_and_in_range():
+    flat = [i for pair in BILATERAL_PAIRS for i in pair]
+    assert len(BILATERAL_PAIRS) == 21
+    assert len(set(flat)) == len(flat)  # no index in two pairs
+    assert set(flat) & set(MIDLINE_POINTS) == set()
+    assert all(0 <= i < 48 for i in flat + list(MIDLINE_POINTS))
+    # 19 and 21 are named in the v3 legend but are not a matched pair.
+    assert set(range(48)) - set(flat) - set(MIDLINE_POINTS) == {19, 21}
