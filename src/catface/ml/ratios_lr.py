@@ -1,5 +1,6 @@
-"""Model (1): logistic regression on the two geometric ratios (eye aspect
-ratio, ear angle) -- the Q2 baseline E2 tests a learned model against.
+"""Model (1): logistic regression on three geometric ratios (eye aspect
+ratio, ear angle, muzzle spread) -- the Q2 baseline E2 tests a learned
+model against.
 """
 
 from sklearn.linear_model import LogisticRegression
@@ -17,5 +18,5 @@ def run() -> dict:
     metrics = cv.cross_validate(features.ratio_X, features.y, features.split, build_model)
     metrics["labels"] = features.classes
     metrics["model"] = "ratios_lr"
-    metrics["n_features"] = 2
+    metrics["n_features"] = 3
     return metrics

@@ -1,7 +1,7 @@
 """E2: run all three baseline models (ratios+LR, coords+LR, coords+MLP)
 over the identical stratified 5-fold split, write metrics/config per run
 directory, confusion-matrix and macro-F1-comparison plots, and the E2
-README. Answers RSCH-2 / Q2: does a learned model beat two geometric
+README. Answers RSCH-2 / Q2: does a learned model beat three geometric
 ratios fed to logistic regression?
 
 Usage: uv run python scripts/baselines.py
@@ -18,10 +18,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from catface.core.geometry import muzzle_spread_ratio
 from catface.ml import coords_lr, mlp, ratios_lr
 from catface.ml.features import load_raw_shapes
-from catface.ml.plausibility import LEFT_EYE, MUZZLE, RIGHT_EYE
 from catface.ml.splits import SPLITS_PATH, USABLE_CLASSES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -87,14 +85,14 @@ def q2_verdict(all_metrics: dict[str, dict]) -> tuple[bool, str]:
     if matches:
         reading = (
             "A match is a valid negative answer to Q2 under RSCH-2's stop condition, not a "
-            "failure: the coordinate-level model finds nothing past what the two hand-built "
+            "failure: the coordinate-level model finds nothing past what the three hand-built "
             "ratios already capture."
         )
     else:
         reading = (
-            "The MLP clears the two-ratio baseline by more than one fold's worth of its own "
+            "The MLP clears the three-ratio baseline by more than one fold's worth of its own "
             "noise, so Q2's answer here is that the learned model does find signal past eye "
-            "aperture and ear angle."
+            "aperture, ear angle, and muzzle spread."
         )
     sentence = (
         f"Model (1) ratios_lr scores mean macro F1 {m1:.3f}. Model (3) mlp scores "
@@ -132,21 +130,22 @@ def write_readme(
     all_metrics: dict[str, dict],
     config: dict,
     input_counts: dict[str, int],
-    spread_stats: tuple[float, float],
 ) -> None:
     _matches, verdict_sentence = q2_verdict(all_metrics)
-    spread_mean, spread_std = spread_stats
 
     lines = [
         "# experiments/e2 — baselines",
         "",
         "## What this is",
         ("RSCH-2 asks Q2: does a learned model beat two geometric ratios (eye aperture, ear "
-        "angle) fed to logistic regression? This run trains three baseline models on "
-        "cat-emotions-3, plausible rows only, the three usable classes (attentive, relaxed, "
-        "uncomfortable), on identical stratified 5-fold splits with balanced class weights. "
-        "Produced by `uv run python scripts/make_splits.py` then "
-        "`uv run python scripts/baselines.py`."),
+        "angle) fed to logistic regression? That was the original framing at grooming. Per "
+        "direct user instruction after grooming (2026-09-19), model (1) below was extended "
+        "to a third geometric feature, muzzle spread (`muzzle_spread_ratio`), so it no longer "
+        "matches Q2's original two-ratio framing exactly -- see `docs/backlog.md` RSCH-2. "
+        "This run trains three baseline models on cat-emotions-3, plausible rows only, the "
+        "three usable classes (attentive, relaxed, uncomfortable), on identical stratified "
+        "5-fold splits with balanced class weights. Produced by "
+        "`uv run python scripts/make_splits.py` then `uv run python scripts/baselines.py`."),
         "",
         "## Input",
         f"Rows: {sum(input_counts.values())}. Per-class counts:",
@@ -175,15 +174,6 @@ def write_readme(
         "## Q2 verdict",
         verdict_sentence,
         "",
-        "## Extra readout",
-        (f"`muzzle_spread_ratio` (max pairwise distance among the 22 MUZZLE points, divided "
-        f"by inter-ocular distance) over the {sum(input_counts.values())} input rows: mean "
-        f"{spread_mean:.3f}, std {spread_std:.3f}. This is descriptive only. None of the "
-        "three baselines above use it as a model input; model (1) stays exactly eye aperture "
-        "plus ear angle, per Q2 as posed. It is a geometry-only stand-in for whisker-pad "
-        "spread, not a validated \"tension\" measure. See `docs/backlog.md` RSCH-2 grooming "
-        "notes and `src/catface/core/geometry.py:muzzle_spread_ratio`."),
-        "",
         "## Citations",
         ("- CatFLW (landmark scheme, Finka et al.) and the Finka landmark scheme: see "
         "`docs/MODEL_REPORT.md` Citations."),
@@ -192,8 +182,7 @@ def write_readme(
         "(angles, distance ratios, area ratios by action unit) over cat facial landmarks. "
         "It reports that ear-position and orbital-tightening descriptors gave the smallest "
         "prediction error of the set, external validation that eye aperture and ear angle "
-        "make a reasonable pair to baseline against here, not a requirement to add features "
-        "beyond Q2's stated two."),
+        "make a reasonable pair to baseline against here."),
         "",
     ]
 
@@ -233,19 +222,10 @@ def main(argv: list[str]) -> None:
     }
     (RUN_DIR / "config.json").write_text(json.dumps(config, indent=2))
 
-    raw_shapes, label, _split = load_raw_shapes()
+    _raw_shapes, label, _split = load_raw_shapes()
     input_counts = label.value_counts().reindex(USABLE_CLASSES).to_dict()
-    spreads = np.array(
-        [
-            muzzle_spread_ratio(
-                shape, MUZZLE, shape[list(LEFT_EYE)].mean(axis=0), shape[list(RIGHT_EYE)].mean(axis=0)
-            )
-            for shape in raw_shapes
-        ]
-    )
-    print(f"muzzle_spread_ratio: mean={spreads.mean():.3f} std={spreads.std():.3f} (extra readout, not a model input)")
 
-    write_readme(all_metrics, config, input_counts, (float(spreads.mean()), float(spreads.std())))
+    write_readme(all_metrics, config, input_counts)
     print(f"wrote {RUN_DIR / 'README.md'}")
 
 

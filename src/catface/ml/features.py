@@ -1,7 +1,8 @@
 """Feature builders for E2's three baseline models: ratio features (eye
-aspect ratio + ear angle) for model (1), Procrustes-aligned flattened
-coordinates for models (2) and (3). Shared here so all three models train
-on identical rows, labels, and splits rather than each re-deriving them.
+aspect ratio, ear angle, muzzle spread) for model (1), Procrustes-aligned
+flattened coordinates for models (2) and (3). Shared here so all three
+models train on identical rows, labels, and splits rather than each
+re-deriving them.
 """
 
 from pathlib import Path
@@ -11,13 +12,18 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 
-from catface.core.geometry import ear_angle, eye_aspect_ratio, generalized_procrustes
-from catface.ml.plausibility import LEFT_EAR, LEFT_EYE, RIGHT_EAR, RIGHT_EYE
+from catface.core.geometry import (
+    ear_angle,
+    eye_aspect_ratio,
+    generalized_procrustes,
+    muzzle_spread_ratio,
+)
+from catface.ml.plausibility import LEFT_EAR, LEFT_EYE, MUZZLE, RIGHT_EAR, RIGHT_EYE
 from catface.ml.splits import CACHE_PATH, load_splits_cache
 
 
 class Features(NamedTuple):
-    ratio_X: np.ndarray  # (N, 2)
+    ratio_X: np.ndarray  # (N, 3)
     coord_X: np.ndarray  # (N, 96)
     y: np.ndarray  # (N,) int-encoded label
     split: np.ndarray  # (N,) fold index 0-4
@@ -46,11 +52,11 @@ def load_raw_shapes() -> tuple[np.ndarray, pd.Series, np.ndarray]:
 
 
 def ratio_features(raw_shapes: np.ndarray) -> np.ndarray:
-    """(N, 2): mean(eye_aspect_ratio) and mean(ear_angle) across left/right,
-    computed directly on raw (unaligned) landmarks -- both are already
-    scale/rotation-derived ratios, not raw coordinates, so no Procrustes
-    alignment is needed first."""
-    out = np.zeros((len(raw_shapes), 2))
+    """(N, 3): mean(eye_aspect_ratio) and mean(ear_angle) across left/right,
+    plus muzzle_spread_ratio, computed directly on raw (unaligned) landmarks
+    -- all three are already scale/rotation-derived ratios, not raw
+    coordinates, so no Procrustes alignment is needed first."""
+    out = np.zeros((len(raw_shapes), 3))
     for i, shape in enumerate(raw_shapes):
         left_eye_center = shape[list(LEFT_EYE)].mean(axis=0)
         right_eye_center = shape[list(RIGHT_EYE)].mean(axis=0)
@@ -61,7 +67,8 @@ def ratio_features(raw_shapes: np.ndarray) -> np.ndarray:
             ear_angle(shape, LEFT_EAR, left_eye_center, right_eye_center)
             + ear_angle(shape, RIGHT_EAR, left_eye_center, right_eye_center)
         ) / 2
-        out[i] = (aspect_ratio, angle)
+        spread = muzzle_spread_ratio(shape, MUZZLE, left_eye_center, right_eye_center)
+        out[i] = (aspect_ratio, angle, spread)
     return out
 
 

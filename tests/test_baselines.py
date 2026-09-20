@@ -44,7 +44,7 @@ def _synthetic_shapes(n: int) -> np.ndarray:
 
 def test_ratio_features_shape_dtype():
     out = ratio_features(_synthetic_shapes(5))
-    assert out.shape == (5, 2)
+    assert out.shape == (5, 3)
     assert out.dtype == np.float64
 
 
