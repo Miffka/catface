@@ -1,0 +1,65 @@
+[
+  {
+    "group": "most negative s",
+    "row": 1716,
+    "image_path": "/home/glyc/Documents/PyProjects/catface/data/cat-emotions-3/train/relaxed/CAT_01_00000132_021_png.rf.0d54deaaf7e52e2162b22b1ccc64950a.jpg",
+    "s": -0.9232995146586546,
+    "theta": 46.01446124839377
+  },
+  {
+    "group": "most negative s",
+    "row": 912,
+    "image_path": "/home/glyc/Documents/PyProjects/catface/data/cat-emotions-3/train/attentive/CAT_01_00000127_029_png.rf.876f5b572d2425a19287107529000662.jpg",
+    "s": -0.5999021150819411,
+    "theta": 0.0
+  },
+  {
+    "group": "most negative s",
+    "row": 1030,
+    "image_path": "/home/glyc/Documents/PyProjects/catface/data/cat-emotions-3/train/attentive/CAT_01_00000159_003_png.rf.f6ba260f0f0e31fb617d8e2b335fcd0f.jpg",
+    "s": -0.3942327528415475,
+    "theta": 55.6234867519049
+  },
+  {
+    "group": "near zero s",
+    "row": 1279,
+    "image_path": "/home/glyc/Documents/PyProjects/catface/data/cat-emotions-3/train/relaxed/00000080_027_png.rf.15a2c34b7b289319c92aa0d4b451e1b0.jpg",
+    "s": -0.0024768576852458655,
+    "theta": 28.732500416945726
+  },
+  {
+    "group": "near zero s",
+    "row": 22,
+    "image_path": "/home/glyc/Documents/PyProjects/catface/data/cat-emotions-3/train/attentive/00000006_016_png.rf.a1342aa315a61beabc2328d1033068c7.jpg",
+    "s": -0.0024228204009393212,
+    "theta": 38.88007113640846
+  },
+  {
+    "group": "near zero s",
+    "row": 1562,
+    "image_path": "/home/glyc/Documents/PyProjects/catface/data/cat-emotions-3/train/relaxed/00000425_012_png.rf.1e8b0baf72721101b3d1fae24c16376d.jpg",
+    "s": -0.0023612779218198793,
+    "theta": 29.810533774535056
+  },
+  {
+    "group": "most positive s",
+    "row": 891,
+    "image_path": "/home/glyc/Documents/PyProjects/catface/data/cat-emotions-3/train/attentive/CAT_01_00000119_022_png.rf.26153e11471d6e1aeed368fc25e7fbec.jpg",
+    "s": 0.5668391187664984,
+    "theta": 57.06822460178411
+  },
+  {
+    "group": "most positive s",
+    "row": 815,
+    "image_path": "/home/glyc/Documents/PyProjects/catface/data/cat-emotions-3/train/attentive/CAT_01_00000101_005_png.rf.b69879568f2abf6a140d3e800e7dde18.jpg",
+    "s": 0.40938969242695683,
+    "theta": 53.44635897382462
+  },
+  {
+    "group": "most positive s",
+    "row": 1514,
+    "image_path": "/home/glyc/Documents/PyProjects/catface/data/cat-emotions-3/train/relaxed/00000401_022_png.rf.7a547d176c6ca3e69dc1e41192e6ba07.jpg",
+    "s": 0.3652386166380352,
+    "theta": 45.939174223414064
+  }
+]

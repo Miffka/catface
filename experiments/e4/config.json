@@ -1,0 +1,157 @@
+{
+  "seed": 0,
+  "n_splits": 5,
+  "classes": [
+    "attentive",
+    "relaxed",
+    "uncomfortable"
+  ],
+  "git_sha": "df95e4836aa69e99d742e3a45a92f15e63300785",
+  "splits_path": "data/cache/splits.csv",
+  "splits_sha256": "488c674e6cde9a239b481a5f52091b2372cf1196d2106b6fee86851ecbecee47",
+  "n_rows": 1967,
+  "estimators": {
+    "family_1": "core.geometry.yaw_foreshortening_ratio, pair (4, 8), vertical to point 2",
+    "family_2": "core.geometry.yaw_midline_offset, midline 16, pair (4, 8)",
+    "legacy": "core.geometry.yaw_centroid_proxy (E1's quantity, not a binning quantity)"
+  },
+  "frontal_percentile": 95.0,
+  "frontal_percentile_sweep": [
+    90.0,
+    95.0,
+    99.0
+  ],
+  "r_frontal": {
+    "90.0": 1.5334224744534228,
+    "95.0": 1.632998016737184,
+    "99.0": 1.8747931516087146
+  },
+  "out_of_domain_rows": {
+    "90.0": 197,
+    "95.0": 99,
+    "99.0": 20
+  },
+  "bins": {
+    "n_bins": 4,
+    "occupancy_4_bins": {
+      "per_bin": [
+        44,
+        20,
+        18,
+        25
+      ],
+      "per_bin_fold": [
+        [
+          9,
+          13,
+          7,
+          6,
+          9
+        ],
+        [
+          2,
+          2,
+          5,
+          8,
+          3
+        ],
+        [
+          6,
+          2,
+          4,
+          2,
+          4
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          5
+        ]
+      ],
+      "empty_cells": 0
+    },
+    "fallback_taken": false,
+    "theta_edges": [
+      0.0,
+      29.772694641183282,
+      35.30715527168133,
+      39.1556423032326,
+      61.50567758844891
+    ]
+  },
+  "ratio_edges": [
+    1.632998016737184,
+    1.4174458660782407,
+    1.3326332109079166,
+    1.2662814751098908,
+    0.7790570968856279
+  ],
+  "internal_control": {
+    "spearman_rho": 0.10574370077230043,
+    "spearman_ci": [
+      0.06151732773234083,
+      0.1494447659629467
+    ],
+    "bootstrap_b": 1000,
+    "bootstrap_seed": 0,
+    "rho_thresholds": {
+      "yaw": 0.5,
+      "withdraw": 0.3
+    }
+  },
+  "d_rel": {
+    "philtrum_median": 0.05173355263881842,
+    "philtrum_iqr": [
+      0.021375668039118712,
+      0.10255527823062599
+    ],
+    "chin_median": 0.044905620378953424,
+    "chin_iqr": [
+      0.019336962690095362,
+      0.09132534724418016
+    ],
+    "min_degrees": 5.0,
+    "n_rows_used": 1862
+  },
+  "sign_split": {
+    "negative_s": 1023,
+    "positive_s": 944
+  },
+  "centroid_proxy_vs_theta_r": -0.06725105311182374,
+  "centroid_proxy_abs_max": 0.1264596584847305,
+  "e1_best_pc_centroid_proxy_r": 0.8964395724887605,
+  "reproduction_check": {
+    "ratios_lr": {
+      "source": "experiments/e2/ratios_lr/metrics.json",
+      "max_abs_delta": 0.0,
+      "exact": true
+    },
+    "coords_lr": {
+      "source": "experiments/e2/coords_lr/metrics.json",
+      "max_abs_delta": 0.0,
+      "exact": true
+    },
+    "mlp": {
+      "source": "experiments/e2/mlp/metrics.json",
+      "max_abs_delta": 0.0,
+      "exact": true
+    },
+    "gnn_identity": {
+      "source": "experiments/e3/gnn_identity/metrics.json",
+      "max_abs_delta": 0.0,
+      "exact": true
+    },
+    "yaw_only_lr": {
+      "source": null,
+      "max_abs_delta": null,
+      "exact": null
+    },
+    "random_baseline": {
+      "source": "experiments/e2/random_baseline/metrics.json",
+      "max_abs_delta": 0.0,
+      "exact": true
+    }
+  }
+}
