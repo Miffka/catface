@@ -34,17 +34,25 @@ def cross_validate(
     n_splits: int = 5,
     oversample: bool = False,
     oversample_seed: int = 0,
+    return_oof: bool = False,
 ) -> dict:
     """Train `model_fn()` (a fresh, untrained model each fold) on rows
     where split != k and evaluate on split == k, for k in 0..n_splits-1.
     `model_fn`'s return must implement .fit(X, y) and .predict(X). If
     `oversample`, the training fold (only) is rebalanced via
-    `oversample_to_balance` before fitting; the test fold is never touched."""
+    `oversample_to_balance` before fitting; the test fold is never touched.
+
+    `return_oof` adds an `oof_pred` key holding each row's out-of-fold
+    prediction, which E4 needs to score per yaw bin. Off by default and
+    appended last, so the returned dict keeps E2's and E3's twelve keys in
+    their order and their committed `metrics.json` stay byte-identical.
+    """
     labels = sorted(set(np.asarray(y).tolist()))
     per_fold_macro_f1 = []
     per_fold_kappa = []
     per_fold_mcc = []
     total_confusion = np.zeros((len(labels), len(labels)), dtype=int)
+    oof = np.full(len(y), -1, dtype=int)
 
     for k in range(n_splits):
         train_mask, test_mask = split != k, split == k
@@ -54,6 +62,7 @@ def cross_validate(
         model = model_fn()
         model.fit(X_train, y_train)
         pred = model.predict(X[test_mask])
+        oof[test_mask] = pred
         y_test = y[test_mask]
 
         per_fold_macro_f1.append(f1_score(y_test, pred, average="macro", labels=labels))
@@ -61,7 +70,7 @@ def cross_validate(
         per_fold_mcc.append(matthews_corrcoef(y_test, pred))
         total_confusion += confusion_matrix(y_test, pred, labels=labels)
 
-    return {
+    result = {
         "per_fold_macro_f1": [float(v) for v in per_fold_macro_f1],
         "mean_macro_f1": float(np.mean(per_fold_macro_f1)),
         "std_macro_f1": float(np.std(per_fold_macro_f1)),
@@ -74,3 +83,13 @@ def cross_validate(
         "confusion_matrix": total_confusion.tolist(),
         "labels": labels,
     }
+    if return_oof:
+        # `make_splits` seeds every fold at -1, so a row no fold tested would
+        # otherwise pass silently as a prediction of class -1.
+        if (oof == -1).any():
+            raise ValueError(
+                f"{int((oof == -1).sum())} rows were never in a test fold: "
+                f"`split` must cover 0..{n_splits - 1} for every row"
+            )
+        result["oof_pred"] = oof.tolist()
+    return result
