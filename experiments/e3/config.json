@@ -1,0 +1,45 @@
+{
+  "seed": 0,
+  "n_splits": 5,
+  "classes": [
+    "attentive",
+    "relaxed",
+    "uncomfortable"
+  ],
+  "git_sha": "422cc3944e81d2a2ca31abff728eafb280661ced",
+  "adjacency_path": "models/graph_edge_schemes/graph_edges_manual_v3.txt",
+  "adjacency_sha256": "86b29330044500b04f1a9bf38d814537aea8624da0e2fb0b18f6a75bf0a97fb4",
+  "anatomical_edge_count": 98,
+  "random_edge_count": 98,
+  "random_adjacency_seed": 1,
+  "arms": {
+    "gnn_anatomical": {
+      "readout": "flatten"
+    },
+    "gnn_random_ablation": {
+      "readout": "flatten"
+    },
+    "gnn_identity": {
+      "readout": "flatten"
+    },
+    "gnn_anatomical_meanpool": {
+      "readout": "mean"
+    }
+  },
+  "balancing": "cv.cross_validate(oversample=True), no in-fit class weights",
+  "onnx_export_check": {
+    "success": true,
+    "opset": 17,
+    "input_shape": [
+      1,
+      48,
+      4
+    ],
+    "exporter": "torch.onnx.export(dynamo=False)",
+    "readout": "flatten",
+    "warnings": [
+      "You are using the legacy TorchScript-based ONNX export. Starting in PyTorch 2.9, the new torch.export-based ONNX exporter has become the default. Learn more about the new export logic: https://docs.pytorch.org/docs/stable/onnx_export.html. For exporting control flow: https://pytorch.org/tutorials/beginner/onnx/export_control_flow_model_to_onnx_tutorial.html",
+      "The feature will be removed. Please remove usage of this function"
+    ]
+  }
+}
