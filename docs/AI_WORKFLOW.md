@@ -6,6 +6,22 @@ human checked or changed before accepting it.
 
 ---
 
+## 2026-09-20 — RSCH-2/E2 addendum: kappa/MCC, random-baseline reference, oversampling
+
+**Asked:** implement a second direct-user-instruction addendum to E2's three baseline models: report Cohen's kappa and MCC alongside macro F1, add a uniform-random `DummyClassifier` chance-level reference (reported separately, excluded from the Q2 verdict), and replace the balancing mechanism — inverse-frequency `class_weight="balanced"` / class-weighted `CrossEntropyLoss` — with random oversampling of minority classes on the training folds only, test folds untouched.
+
+**Tool:** Claude Code, main session, `general-purpose` agent framed as ML Engineer per `docs/team/ml-engineer.md` and `docs/research_process.md`, `/ponytail full`. No Explore/Plan subagents — the exact implementation (function signatures, file list, execution order) was already specified in the instruction, so this was direct implementation against a given design rather than open design work.
+
+**What it did:** added `oversample_to_balance` (per-class `sklearn.utils.resample` up to the majority count) and extended `cross_validate` with an `oversample` kwarg (default `False`, so RSCH-3/E3's existing `gnn.py` call site is unaffected) in `src/catface/ml/cv.py`; dropped `class_weight="balanced"` from `ratios_lr.py`/`coords_lr.py` and the `compute_class_weight`/`weight_tensor` block from `mlp.py`, replacing all three with `oversample=True` at their `cross_validate` call sites; added `src/catface/ml/random_baseline.py` (`DummyClassifier(strategy="uniform", random_state=0)`); extended `scripts/baselines.py` with a `random_baseline_section` and a separate (not `MODELS`-dict-driven) code path for the fourth reference run, plus kappa/MCC columns in the per-model tables and an updated "Required controls" checklist; extended `tests/test_baselines.py` with `EXPECTED_METRIC_KEYS` coverage, an `oversample_to_balance` unit test on synthetic 14/4/2 class counts, and a `random_baseline` smoke test. Reran `scripts/baselines.py` for real against the existing `data/cache/splits.csv` (not regenerated).
+
+**Checked by human:** none yet — first pass, pending review. The implementation spec itself (exact function signatures, file list, what stays out of scope) was pre-written by the user, not designed by the agent.
+
+**What it caught:** nothing that changed the design — the spec was implemented as given. It did confirm one assumption named in the instruction: `q2_verdict()` uses explicit `all_metrics["ratios_lr"]`/`["mlp"]` key lookups, not generic iteration, so leaving `random_baseline` out of `all_metrics`/`MODELS` (to avoid a `MODEL_COLORS` `KeyError` in the generic comparison plot) doesn't affect it.
+
+**Verified:** `uv run pytest tests/test_baselines.py -v` (8/8) before touching `scripts/baselines.py`, then `uv run pytest tests/` (37/38 — the one failure, `tests/test_graph.py`, is a pre-existing RSCH-3/E3 issue unrelated to this change, confirmed by `git status` showing `core/graph.py` already modified before this session started; `tests/test_gnn.py` itself passed 7/7, confirming `cv.py`'s new `oversample` kwarg defaulting to `False` left E3 behavior unchanged). Ran `scripts/baselines.py` for real and inspected the regenerated `experiments/e2/README.md`, all four `metrics.json` files, and the five plots. Confirmed `git diff -- data/cache/splits.csv` is empty. Q2 verdict recomputed as still NO MATCH under the new balancing mechanism (gap widened from 0.029 to 0.033 macro F1). Result recorded in `docs/backlog.md` RSCH-2 as an addendum/comment pair; the issue itself was not closed, per process (Research QA's call). `docs/MODEL_REPORT.md` has no E2 section yet, so it was left untouched, per process (Research PM writes it at PASS).
+
+---
+
 ## 2026-09-19 — E0 close-out: overlay verdict analysis, MODEL_REPORT, QA, backlog
 
 **Asked:** analyse the 80-overlay verdict the user had written by hand into `data/cache/overlays/overlay.csv`, take the user's observation that Scared, Surprised and Angry were mixed up, and close RSCH-0.
