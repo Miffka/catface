@@ -208,6 +208,57 @@ beat the E2 MLP?
 
 **Addendum (direct user instruction, 2026-09-20, overrides the Method line's mechanism above):** the Method line above ("Adjacency hand-written from anatomy in `core/graph.py`") is still true in spirit but the mechanism changed. `core/graph.py` no longer derives edges geometrically from a reference shape — it parses a hand-authored edge list at `models/graph_edges_manual.txt`, itself rewritten by a human reviewing rendered overlays of the earlier geometric version (`scripts/graph_review_manual.py`). Same "a human decided this because CatFLW publishes no index map" rationale, same output shape (76 unique edges over all 48 nodes), different mechanism. See `docs/DECISIONS.md` 2026-09-20 for the full rationale; this note is the record of the divergence, not a rewrite of the Method text above.
 
+**Re-grooming (Research PM, 2026-09-20). Supersedes the Method and Acceptance criteria above. The first run's artifacts stay on disk as the record of what was measured.**
+
+The first E3 run completed and reported Q1 = NO. I am sending it back on methodology, per `research_process.md` step 5: the run did not measure what Q1 asks. Four defects, in descending order of how much they matter.
+
+*Defect 1, the readout zeroes the signal.* `_Net.forward` ends in `h.mean(dim=1)`, a mean over the 48-node axis. Node features come from `generalized_procrustes`, and `_center_scale` subtracts each shape's centroid, so the node-axis mean of the GNN's input is exactly zero for all 1967 rows in all four channels. Measured between-sample variance surviving that readout: 2.58e-33, against 1.64e-2 for the flattened coordinates the MLP reads. The pooling step discards the input before the classifier head sees it, and only ReLU asymmetry leaks anything through. The GNN and the MLP differ in two ways at once, adjacency and readout, and the readout term dominates, so the run cannot attribute its result to the graph. Q1 needs the readout held constant and the adjacency varied alone.
+
+*Defect 2, the conclusion changes once the readout is fixed.* Holding convs, adjacency, splits and epochs fixed and swapping only the readout: anatomical mean-pool 0.266 macro F1 / 0.018 kappa, anatomical flatten 0.374 / 0.096, random-adjacency flatten 0.398 / 0.124. The random adjacency beats the anatomical one. The reported "Condition B HOLDS" is an artifact of the broken readout, and the corrected result is the negative `docs/PLAN_RESEARCH.md` asks for by name: if random does as well, the structure carries nothing.
+
+*Defect 3, the two arms were balanced differently.* `gnn.run` calls `cv.cross_validate` without `oversample=True` and applies `compute_class_weight("balanced")` inside `fit`; `mlp.run` passes `oversample=True` and no loss weights. The GNN kept the mechanism the 2026-09-20 instruction replaced for E2, so "identical conditions" in the run's control list is not true against the MLP. This one does not drive the result (mean-pool with oversampling scores 0.269, against 0.266 with class weights), but it has to go before the comparison means anything.
+
+*Defect 4, the verdict used a metric that cannot see the difference.* Condition B compared two arms sitting at kappa 0.018 and 0.013, both at chance, and declared a winner on macro F1. Between two chance-level classifiers, macro F1 reflects the prediction marginals, not discrimination. E3 also never picked up the `DummyClassifier` reference E2 gained on 2026-09-20, which would have shown the anatomical GNN's 0.266 macro F1 sitting *below* a uniform dummy's 0.302.
+
+**Revised method.** Same hand-written dense graph conv, same no-PyG constraint, same frozen splits in `data/cache/splits.csv`. Five arms, every one of them flatten readout and `oversample=True`:
+
+| arm | adjacency | what it is for |
+|---|---|---|
+| `gnn_anatomical` | v3, 98 edges | the hypothesis |
+| `gnn_random_ablation` | random, 98 edges, seed 1 | the ablation RSCH-3 already required |
+| `gnn_identity` | `A_hat = I` | new control, see below |
+| `gnn_anatomical_meanpool` | v3, 98 edges | keeps the original defect on the record |
+| `random_baseline` | none | chance reference, as E2 |
+
+`gnn_identity` is the control the first grooming missed. It runs the same depth and parameter count with message passing switched off. Without it, an anatomical arm that beat the MLP would not tell you whether the graph did the work or the extra depth did, and the ablation against a random adjacency cannot separate those either, because a random graph still passes messages. Name it now rather than discover it at QA.
+
+**Adjacency provenance.** `core/graph.py` loads `models/graph_edge_schemes/graph_edges_manual_v3.txt`, 100 edge lines, 98 unique. `docs/DECISIONS.md` 2026-09-20 documents the v1 file, 78 lines and 76 unique, at `models/graph_edges_manual.txt`, a path that no longer exists. Nobody recorded v2 or v3. The edge list is the sole independent variable of this experiment and it was revised twice without an entry, so the ML Engineer states in the run comment whether any scheme was chosen by looking at E3 metrics. If one was, say so and I will re-scope again: selecting the independent variable against the outcome invalidates the comparison regardless of what the numbers say.
+
+**Revised acceptance criteria:**
+- [ ] Untrained-model ONNX export attempted and recorded before any training run, for the flatten head (the head shape changed, so the earlier export result does not carry over)
+- [ ] All five arms trained on the frozen splits, macro F1 + kappa + MCC + confusion matrix, 5-fold
+- [ ] Readout identical across the four trained GNN arms; balancing identical across all arms (`oversample=True`, no in-`fit` class weights)
+- [ ] `gnn_identity` reported with the same detail as the other arms, not as a footnote
+- [ ] Q1 verdict computed on kappa, with macro F1 reported beside it, as both conditions: beats the E2 MLP by more than the anatomical arm's own CV std, **and** beats the random adjacency by the same margin
+- [ ] Adjacency file path and sha256 pinned in `experiments/e3/config.json`
+- [ ] Run comment states whether any edge scheme was selected against E3 metrics
+- [ ] Negative outcome reported as such
+- [ ] No `torch_geometric` import anywhere in the run
+
+**Stop condition:** unchanged, and none fires. A random-adjacency tie is the Q1 answer.
+
+**Expected shape of the result,** recorded before the run so the ML Engineer cannot be accused of writing the conclusion afterwards: anatomical near 0.374 macro F1 / 0.096 kappa, random near 0.398 / 0.124, both under the MLP's 0.418 / 0.155. That reads Q1 = NO, on the ground that a hand-authored anatomical graph does no better than a random graph of equal density. If the run lands somewhere else, the run is right and this paragraph is wrong.
+
+**Comment (ML Engineer, 2026-09-20, re-groomed re-run):** implemented the revised method and re-ran, `experiments/e3/`. All five arms on the frozen `data/cache/splits.csv`, 5-fold, flatten readout and `oversample=True` everywhere except the arm that exists to vary one of those. 5-fold means ± std, macro F1 / kappa / MCC: `gnn_anatomical` 0.374 ± 0.015 / 0.096 ± 0.021 / 0.102 ± 0.022; `gnn_random_ablation` 0.398 ± 0.024 / 0.124 ± 0.037 / 0.129 ± 0.039; `gnn_identity` 0.466 ± 0.012 / 0.231 ± 0.022 / 0.235 ± 0.021; `gnn_anatomical_meanpool` 0.269 ± 0.021 / 0.019 ± 0.018 / 0.023 ± 0.022; `random_baseline` 0.302 ± 0.000 / 0.017 ± 0.001 / 0.018 ± 0.001. Per-fold tables, confusion matrices and plots are in `experiments/e3/README.md` and `experiments/e3/<arm>/metrics.json`.
+
+**Q1 verdict: NO,** a negative result, and both conditions fail rather than one. On kappa, with macro F1 beside it: condition A, the anatomical arm scores 0.096 against the E2 MLP's 0.155, diff -0.059 against its own std of 0.021, DOES NOT HOLD (macro F1 0.374 vs. 0.418). Condition B, the anatomical arm scores 0.096 against the random adjacency's 0.124, diff -0.028 against the same std, DOES NOT HOLD (macro F1 0.398 for random). This lands within noise of the expected shape recorded above, including the direction: a random graph of equal density does better than the hand-authored one.
+
+**The identity control is the sharpest reading here and it was worth adding.** `A_hat = I`, message passing off, same three layers and same parameter count: 0.231 kappa / 0.466 macro F1, above both graph arms and above the E2 MLP (0.155 / 0.418). Turning the graph off raises the score, so no part of the anatomical arm's result can be credited to the adjacency. The convolution averages each node with its neighbours and smooths away landmark-position signal that the same layers keep when they act per-node. Without this arm the run would have shown two graph arms below the MLP and left open whether depth or adjacency was at fault; it was the adjacency. `gnn_anatomical_meanpool` reproduces the first run's defect on the record at 0.019 kappa / 0.269 macro F1, below the uniform dummy's 0.302 macro F1, which is the reading defect 4 predicted.
+
+**Edge-scheme selection, asked for by name:** I cannot determine it from git history, and here is exactly why. `models/*` is gitignored with per-file exceptions, so `models/graph_edge_schemes/` was never tracked. One commit in the whole history touches any edge scheme, `cd0fbdd` "Add graph edges v1" (2026-09-20 12:58), for `models/graph_edges_manual.txt`; `git log --follow -- models/graph_edge_schemes/` returns nothing, and v2 and v3 have no commit, no message and no author record. What the on-disk record does show, and I report it as circumstantial rather than as an answer: mtimes put v1 at 11:47, the first E3 run's output directories at 13:06 and 13:07, v2 at 13:34 and v3 at 13:59, so both revisions were authored after E3 metrics for v1 existed on disk. Whether whoever wrote them read those metrics first, nothing in the repository records. For my own part: I ran against `core.graph.DEFAULT_EDGES_PATH` (v3, 98 unique edges over all 48 nodes) as I found it, changed no edge, and compared no scheme against another. The adjacency file path and its sha256 `86b29330044500b04f1a9bf38d814537aea8624da0e2fb0b18f6a75bf0a97fb4` are now pinned in `experiments/e3/config.json`, and I added a `.gitignore` exception so the three scheme files are tracked from here on and that sha256 can be checked against something.
+
+Housekeeping in the same pass: `GNNClassifier.fit` no longer applies `compute_class_weight("balanced")` and `gnn.run` passes `oversample=True`, so balancing matches E2's MLP; `readout` is a constructor argument on `_Net`/`GNNClassifier` defaulting to `flatten`; the ONNX export check ran before any training against the flatten head (opset 17, input `[1,48,4]`, head now `Linear(1536, 3)`) and succeeded; `A_hat` stays a registered buffer and the conv stays hand-written dense matmuls, no `torch_geometric` anywhere, AST-walk tested. Stale `models/graph_edges_manual.txt` references fixed in `core/graph.py`, `scripts/gnn.py`, `scripts/graph_review_manual.py` and the E3 README. `tests/test_graph.py`'s edge-count assertion, which a previous pass deleted rather than updated, is back and asserts 98. `uv run pytest` is green, 43 passed. `git diff -- data/cache/splits.csv` is empty. Not closing this issue.
+
 ---
 
 ## [research] RSCH-4: E4 — class structure and pose
