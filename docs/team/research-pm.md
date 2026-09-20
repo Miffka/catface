@@ -35,7 +35,3 @@ negative results — into `docs/MODEL_REPORT.md` under the matching
 question. A negative result with correct methodology goes in as a
 finding, not as a failure to hide.
 
-If PLAN_RESEARCH.md's own time box for an experiment is blown, or the
-experiment is behind app milestones, say so and flag it: "research
-stops if the app falls behind" is the project's stated priority, not
-yours to override quietly.
