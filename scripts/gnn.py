@@ -27,8 +27,8 @@ from catface.core.graph import (
     build_cat_adjacency,
     build_random_adjacency,
 )
-from catface.ml import gnn, random_baseline
-from catface.ml.features import load_raw_shapes
+from catface.ml import cv, gnn, onnx_export, random_baseline
+from catface.ml.features import load_features, load_raw_shapes, node_features
 from catface.ml.splits import SPLITS_PATH, USABLE_CLASSES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -74,6 +74,27 @@ def git_sha() -> str:
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def finalize_arm(name: str, A_hat: np.ndarray, readout: str, features, mean_shape: np.ndarray, out_dir: Path) -> dict:
+    """Every arm gets a deployed checkpoint (one extra fit on the full,
+    oversample-balanced dataset -- distinct from the 5 per-fold CV models
+    gnn.run already discards) plus a trained-model ONNX export + onnxsim +
+    parity check. Full parity numbers land in `out_dir/onnx_export.json`;
+    only the checkpoint path and pass/fail are surfaced to config.json/the
+    README."""
+    model = cv.fit_final_model(features.node_X, features.y, gnn.build_model(A_hat, readout), oversample=True)
+
+    ckpt_path = out_dir / "checkpoint.pt"
+    gnn.save_checkpoint(model, A_hat, readout, mean_shape, features.classes, ckpt_path, arm=name, git_sha=git_sha())
+
+    onnx_result = onnx_export.export_and_verify_onnx(
+        model.model, features.node_X, out_dir, input_names=["node_features"], output_names=["logits"]
+    )
+    return {
+        "checkpoint_path": str(ckpt_path.relative_to(ROOT)),
+        "onnx_success": onnx_result["success"],
+    }
 
 
 def plot_confusion_matrix(metrics: dict, out_path: Path) -> None:
@@ -172,12 +193,28 @@ def readout_defect_section() -> list[str]:
     ]
 
 
+def checkpoint_section(arm_results: dict[str, dict]) -> list[str]:
+    return [
+        "## Checkpoints & ONNX export",
+        "Each arm above is also fit once more on the full dataset and checkpointed:",
+        "",
+        "| arm | checkpoint | onnx export |",
+        "|---|---|---|",
+        *[
+            f"| `{name}` | `{result['checkpoint_path']}` | {'PASS' if result['onnx_success'] else 'FAIL'} |"
+            for name, result in arm_results.items()
+        ],
+        "",
+    ]
+
+
 def write_readme(
     all_metrics: dict[str, dict],
     random_metrics: dict,
     config: dict,
     input_counts: dict[str, int],
     export_result: dict,
+    arm_results: dict[str, dict],
 ) -> None:
     export_line = (
         f"ONNX export of an untrained GNN **{'succeeded' if export_result['success'] else 'FAILED'}** "
@@ -231,6 +268,9 @@ def write_readme(
          "This is not RSCH-6's export verification (parity, benchmarking, manifest), which belongs "
          "to the Export Verifier once a winning model exists."),
         "",
+    ]
+    lines += checkpoint_section(arm_results)
+    lines += [
         "## Results",
         "",
         "### mlp (E2, carried over for comparison)",
@@ -263,9 +303,7 @@ def write_readme(
     (RUN_DIR / "README.md").write_text("\n".join(lines) + "\n")
 
 
-def main(argv: list[str]) -> None:
-    del argv  # no arguments: deterministic given data/cache/splits.csv
-
+def run_experiment() -> None:
     if not SPLITS_PATH.exists():
         print(
             f"error: {SPLITS_PATH} does not exist. Run "
@@ -274,6 +312,12 @@ def main(argv: list[str]) -> None:
         )
         sys.exit(1)
 
+    raw_shapes, label, _split = load_raw_shapes()
+    features = load_features()
+    # load_features() doesn't expose mean_shape; recomputed via the same
+    # public node_features() call it uses internally, so each arm's
+    # checkpoint carries the training-time mean single-image inference needs.
+    _aligned, mean_shape = node_features(raw_shapes)
     anatomical_edges, A_hat_anatomical = build_cat_adjacency()
 
     # Untrained-model ONNX export check, before any training, on the flatten
@@ -300,6 +344,7 @@ def main(argv: list[str]) -> None:
     )
 
     all_metrics: dict[str, dict] = {}
+    arm_results: dict[str, dict] = {}
     for name, A_hat, readout in arms:
         print(f"running {name} (readout={readout})...")
         metrics = gnn.run(A_hat, name, readout=readout)
@@ -312,6 +357,13 @@ def main(argv: list[str]) -> None:
             f"kappa = {metrics['mean_kappa']:.3f} +/- {metrics['std_kappa']:.3f}"
         )
         plot_confusion_matrix(metrics, PLOTS_DIR / f"{name}_confusion_matrix.png")
+
+        print(f"  finalizing {name}: full-dataset checkpoint + ONNX export check...")
+        arm_results[name] = finalize_arm(name, A_hat, readout, features, mean_shape, out_dir)
+        print(
+            f"  checkpoint: {arm_results[name]['checkpoint_path']}, "
+            f"onnx export: {'PASS' if arm_results[name]['onnx_success'] else 'FAIL'}"
+        )
 
     print("running random_baseline...")
     random_metrics = random_baseline.run()
@@ -342,14 +394,19 @@ def main(argv: list[str]) -> None:
         "arms": {name: {"readout": readout} for name, _A, readout in arms},
         "balancing": "cv.cross_validate(oversample=True), no in-fit class weights",
         "onnx_export_check": export_result,
+        "checkpoints": arm_results,
     }
     (RUN_DIR / "config.json").write_text(json.dumps(config, indent=2))
 
-    _raw_shapes, label, _split = load_raw_shapes()
     input_counts = label.value_counts().reindex(USABLE_CLASSES).to_dict()
 
-    write_readme({"mlp": mlp_metrics, **all_metrics}, random_metrics, config, input_counts, export_result)
+    write_readme({"mlp": mlp_metrics, **all_metrics}, random_metrics, config, input_counts, export_result, arm_results)
     print(f"wrote {RUN_DIR / 'README.md'}")
+
+
+def main(argv: list[str]) -> None:
+    del argv  # no arguments: deterministic given data/cache/splits.csv
+    run_experiment()
 
 
 if __name__ == "__main__":
