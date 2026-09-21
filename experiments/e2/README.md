@@ -1,7 +1,7 @@
 # experiments/e2 — baselines
 
 ## What this is
-RSCH-2 asks Q2: does a learned model beat two geometric ratios (eye aperture, ear angle) fed to logistic regression? That was the original framing at grooming. Per direct user instruction after grooming (2026-09-19), model (1) below was extended to a third geometric feature, muzzle spread (`muzzle_spread_ratio`), so it no longer matches Q2's original two-ratio framing exactly -- see `docs/backlog.md` RSCH-2. Per a second direct user instruction (2026-09-20), the balancing mechanism changed from inverse-frequency class weights to random oversampling of minority classes on the training folds only (`oversample_to_balance`), and each model now also reports Cohen's kappa and MCC alongside macro F1, with a uniform-random classifier run as a chance-level reference. This run trains three baseline models on cat-emotions-3, plausible rows only, the three usable classes (attentive, relaxed, uncomfortable), on identical stratified 5-fold splits. Produced by `uv run python scripts/make_splits.py` then `uv run python scripts/baselines.py`.
+Three baseline models -- ratios+LR (`ratios_lr`, three geometric ratios: eye aperture, ear angle, muzzle spread), coords+LR (`coords_lr`), coords+MLP (`mlp`) -- trained on cat-emotions-3, plausible rows only, the three usable classes (attentive, relaxed, uncomfortable), on identical stratified 5-fold splits. Balancing: random oversampling of minority classes on the training folds only (`oversample_to_balance`). Each model reports macro F1, Cohen's kappa and MCC, with a uniform-random classifier run as a chance-level reference. Produced by `uv run python scripts/make_splits.py` then `uv run python scripts/baselines.py`.
 
 ## Input
 Rows: 1967. Per-class counts:
@@ -79,7 +79,7 @@ Confusion matrix (rows = true, columns = predicted, summed over 5 folds):
 Plot: `plots/mlp_confusion_matrix.png`.
 
 ## Random-classifier reference
-`DummyClassifier(strategy="uniform", random_state=0)`, run on the identical 5-fold splits as the three models above -- a chance-level reference, excluded from the Q2 verdict and from the macro-F1 comparison plot.
+`DummyClassifier(strategy="uniform", random_state=0)`, run on the identical 5-fold splits as the three models above -- a chance-level reference, excluded from the macro-F1 comparison plot.
 
 | metric | mean +/- std |
 |---|---|
@@ -88,18 +88,6 @@ Plot: `plots/mlp_confusion_matrix.png`.
 | MCC | 0.018 +/- 0.001 |
 
 Plot: `plots/random_baseline_confusion_matrix.png`.
-
-## Required controls
-- [x] Identical splits across all three models: all three read `data/cache/splits.csv`, written once by `scripts/make_splits.py`.
-- [x] 5-fold: `n_splits=5` in `catface.ml.splits.make_splits` and `catface.ml.cv.cross_validate`.
-- [x] Macro F1 reported (not accuracy alone): per-fold and mean +/- std, above.
-- [x] Confusion matrix per model: above, summed over folds.
-- [x] Balancing: random oversampling of minority classes on the training folds only (`catface.ml.cv.oversample_to_balance`, via `sklearn.utils.resample`), applied inside `cross_validate` before each fold's `.fit()`; test folds keep the original imbalanced distribution untouched.
-- [x] Cohen's kappa and MCC reported alongside macro F1, per fold and mean +/- std.
-- [x] Random-classifier reference included: `DummyClassifier(strategy="uniform")` on the identical folds, reported separately, excluded from the Q2 verdict.
-
-## Q2 verdict
-Model (1) ratios_lr scores mean macro F1 0.385. Model (3) mlp scores 0.418, std 0.023 across folds. The gap between them is 0.033, beyond one CV std of model (3)'s macro F1: **NO MATCH**. The MLP clears the three-ratio baseline by more than one fold's worth of its own noise, so Q2's answer here is that the learned model does find signal past eye aperture, ear angle, and muzzle spread.
 
 ## Citations
 - CatFLW (landmark scheme, Finka et al.) and the Finka landmark scheme: see `docs/MODEL_REPORT.md` Citations.

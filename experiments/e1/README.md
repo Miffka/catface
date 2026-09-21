@@ -1,10 +1,8 @@
 # experiments/e1 — shape space
 
 ## What this is
-Procrustes alignment + PCA over the E0 landmark cache, cat-emotions-3 only,
-plausible rows only. Answers RSCH-1: is there visible class signal before
-training anything, and does any early PC track a pose confound? Also writes
-`models/class_means.json`. Produced by `uv run python scripts/shape_space.py`.
+Procrustes alignment + PCA over the E0 landmark cache, cat-emotions-3 only, plausible rows only. Also writes `models/class_means.json`. Produced by
+`uv run python scripts/shape_space.py`.
 
 ## Input
 cat-emotions-3 total rows: 2071. Plausible (used): 2029.
@@ -30,9 +28,9 @@ Per-class plausible counts:
 Plot: `plots/pc_explained_variance.png`.
 
 ## Pose confound check
-Threshold: a PC is judged to visibly track a confound at |r| > 0.3.
-- **ear_position**: PC1 tracks it, r = 0.84.
-- **head_yaw**: PC2 tracks it, r = 0.90.
+Plot threshold: |r| > 0.3.
+- **ear_position**: strongest at PC1, r = 0.84.
+- **head_yaw**: strongest at PC2, r = 0.90.
 
 Plot: `plots/pc_confound_scatter.png` (the strongest offending PC vs its proxy).
 
@@ -49,12 +47,7 @@ usable classes only (attentive, relaxed, uncomfortable):
 | PC5 | 0.008 |
 | PC6 | 0.001 |
 
-Classes do not visibly separate in the first six PCs — the best ratio (PC3, 0.044) is small; see `plots/pc_scatter_grid.png`.
-
-## Stop condition
-NOT triggered — RSCH-1 names no stop condition ("this is a look, not a gate"),
-per `docs/backlog.md` and `docs/research_process.md`'s instruction to read the
-stop condition before closing.
+Plot: `plots/pc_scatter_grid.png`.
 
 ## models/class_means.json
 Covers exactly the three usable classes: attentive, relaxed, uncomfortable.

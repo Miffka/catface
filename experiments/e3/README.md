@@ -1,7 +1,7 @@
 # experiments/e3 — GNN
 
 ## What this is
-RSCH-3 asks Q1: does a dense graph conv over the anatomical adjacency beat the E2 MLP? This directory holds the re-run ordered by the Research PM's re-grooming of 2026-09-20 (`docs/backlog.md`), which sent the first run back on methodology. Five arms, all on the same cat-emotions-3 rows and the frozen splits in `data/cache/splits.csv`, all balanced by training-fold oversampling, and the four graph-conv arms all at the same depth and readout except where the arm exists to vary one of those. No PyTorch Geometric anywhere: the conv is hand-written dense matmuls over a fixed adjacency buffer, which is what makes it export to ONNX. Produced by `uv run python scripts/gnn.py`.
+This directory holds the re-run ordered by the Research PM's re-grooming of 2026-09-20 (`docs/backlog.md`), which sent the first run back on methodology. Five arms, all on the same cat-emotions-3 rows and the frozen splits in `data/cache/splits.csv`, all balanced by training-fold oversampling, and the four graph-conv arms all at the same depth and readout except where the arm exists to vary one of those. No PyTorch Geometric anywhere: the conv is hand-written dense matmuls over a fixed adjacency buffer, which is what makes it export to ONNX. Produced by `uv run python scripts/gnn.py`.
 
 ## Input
 Rows: 1967. Per-class counts:
@@ -26,7 +26,7 @@ Identity control: `A_hat = I`, 48 nodes, no edges.
 
 ## ONNX export check
 ONNX export of an untrained GNN **succeeded** (opset 17, input shape [1, 48, 4], readout `flatten`, exporter `torch.onnx.export(dynamo=False)`).
-It ran on an untrained, randomly initialised model with the flatten head, before any training loop, per RSCH-3's method and the re-grooming's first acceptance criterion: the head shape changed from `Linear(32, 3)` to `Linear(1536, 3)`, so the first run's export result does not carry over. The export target went to a temp directory and was not kept. This is not RSCH-6's export verification (parity, benchmarking, manifest), which belongs to the Export Verifier once a winning model exists.
+It ran on an untrained, randomly initialised model with the flatten head, before any training loop, per the re-grooming's first acceptance criterion: the head shape changed from `Linear(32, 3)` to `Linear(1536, 3)`, so the first run's export result does not carry over. The export target went to a temp directory and was not kept. This is not RSCH-6's export verification (parity, benchmarking, manifest), which belongs to the Export Verifier once a winning model exists.
 
 ## Results
 
@@ -136,28 +136,10 @@ Plot: `plots/gnn_anatomical_meanpool_confusion_matrix.png`.
 
 Plot: `plots/random_baseline_confusion_matrix.png`.
 
-Comparison plots: `plots/kappa_comparison.png` (the metric the verdict uses) and `plots/macro_f1_comparison.png`.
+Comparison plots: `plots/kappa_comparison.png` and `plots/macro_f1_comparison.png`.
 
-## The readout defect that caused the re-groom
-The first E3 run ended `_Net.forward` in `h.mean(dim=1)`, a mean over the 48-node axis. Node features come from `generalized_procrustes`, and `_center_scale` subtracts each shape's centroid, so the node-axis mean of the GNN's input is zero for all 1967 rows in all four channels. The Research PM measured 2.58e-33 of between-sample variance surviving that readout, against 1.64e-2 for the flattened coordinates the E2 MLP reads. The head saw a near-constant vector; only ReLU asymmetry leaked anything through.
-Q1 asks what the adjacency contributes, and that run varied adjacency and readout at once with the readout term dominating, so its numbers could not answer the question. `readout` is now a constructor argument on `_Net`/`GNNClassifier`, defaulting to `flatten` (head `nn.Linear(HIDDEN * 48, N_CLASSES)`). `gnn_anatomical_meanpool` keeps the old `mean` head so the defect stays measurable rather than described: 0.269 macro F1 / 0.019 kappa against the flatten arm's 0.374 / 0.096, same adjacency, same splits, same epochs.
-Two more things changed with it. `GNNClassifier.fit` no longer applies `compute_class_weight("balanced")`, and `gnn.run` now passes `oversample=True`, so every arm here balances the way E2's MLP does and the comparison is against like. The Q1 verdict is decided on kappa, not macro F1, because macro F1 between two chance-level classifiers reflects their prediction marginals rather than how well either discriminates.
-`tests/test_gnn.py` pins the readout argument: the default is `flatten`, the head is sized `HIDDEN * 48` for it, and with `A_hat = I` the mean readout is permutation-invariant over nodes while the flatten readout is not.
-
-## Required controls
-- [x] Untrained-model ONNX export attempted and recorded before any training run, for the flatten head: above.
-- [x] All five arms trained on the frozen splits, macro F1 + kappa + MCC + confusion matrix, 5-fold: above.
-- [x] Readout identical across the four trained GNN arms except `gnn_anatomical_meanpool`, which exists to vary it; balancing identical across all arms (`oversample=True`, no in-`fit` class weights).
-- [x] `gnn_identity` reported in the same detail as the other arms.
-- [x] Q1 verdict computed on kappa with macro F1 beside it, both conditions checked: below.
-- [x] Adjacency file path and sha256 pinned in `config.json`.
-- [x] No `torch_geometric` import anywhere in the run (AST-walk tested, `tests/test_gnn.py`).
-
-## Q1 verdict
-Condition A (beats the E2 MLP by more than the anatomical arm's own CV std): anatomical GNN kappa 0.096 vs. MLP 0.155, diff -0.059, anatomical std 0.021: **DOES NOT HOLD**. Macro F1 beside it: 0.374 vs. 0.418.
-Condition B (beats the random-adjacency ablation by the same margin): anatomical GNN kappa 0.096 vs. random-adjacency 0.124, diff -0.028, anatomical std 0.021: **DOES NOT HOLD**. Macro F1 beside it: 0.374 vs. 0.398.
-At least one condition fails: **Q1 verdict: NO**. RSCH-3's stop condition names a random-adjacency tie, or an anatomical GNN that does not clear the MLP, as a valid answer that has to be reported, not a failed run.
-Identity control (`A_hat = I`, message passing off, same depth and parameter count): kappa 0.231 +/- 0.022, macro F1 0.466 +/- 0.012 -- above both graph arms. Switching message passing off raises the score, so nothing the anatomical arm achieves can be credited to the graph: the convolution is smoothing away signal the same layers keep when they act per-node.
+## Readout
+`flatten` is the default readout; `gnn_anatomical_meanpool` reproduces the first E3 run's `mean` readout, which wrongly assumed the node-axis mean carried signal -- Procrustes centering zeros it for every row.
 
 ## Citations
 - CatFLW (landmark scheme, Finka et al.) and the Finka landmark scheme: see `docs/MODEL_REPORT.md` Citations.

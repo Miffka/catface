@@ -6,7 +6,7 @@
     "relaxed",
     "uncomfortable"
   ],
-  "git_sha": "422cc3944e81d2a2ca31abff728eafb280661ced",
+  "git_sha": "6c01ac7c5401760539f85c91621f3f045e3dd92b",
   "adjacency_path": "models/graph_edge_schemes/graph_edges_manual_v3.txt",
   "adjacency_sha256": "86b29330044500b04f1a9bf38d814537aea8624da0e2fb0b18f6a75bf0a97fb4",
   "anatomical_edge_count": 98,
