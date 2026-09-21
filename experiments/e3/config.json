@@ -6,7 +6,7 @@
     "relaxed",
     "uncomfortable"
   ],
-  "git_sha": "6c01ac7c5401760539f85c91621f3f045e3dd92b",
+  "git_sha": "559862d885b75544d4b5ff558ed619051d96d42e",
   "adjacency_path": "models/graph_edge_schemes/graph_edges_manual_v3.txt",
   "adjacency_sha256": "86b29330044500b04f1a9bf38d814537aea8624da0e2fb0b18f6a75bf0a97fb4",
   "anatomical_edge_count": 98,
@@ -41,5 +41,23 @@
       "You are using the legacy TorchScript-based ONNX export. Starting in PyTorch 2.9, the new torch.export-based ONNX exporter has become the default. Learn more about the new export logic: https://docs.pytorch.org/docs/stable/onnx_export.html. For exporting control flow: https://pytorch.org/tutorials/beginner/onnx/export_control_flow_model_to_onnx_tutorial.html",
       "The feature will be removed. Please remove usage of this function"
     ]
+  },
+  "checkpoints": {
+    "gnn_anatomical": {
+      "checkpoint_path": "experiments/e3/gnn_anatomical/checkpoint.pt",
+      "onnx_success": true
+    },
+    "gnn_random_ablation": {
+      "checkpoint_path": "experiments/e3/gnn_random_ablation/checkpoint.pt",
+      "onnx_success": true
+    },
+    "gnn_identity": {
+      "checkpoint_path": "experiments/e3/gnn_identity/checkpoint.pt",
+      "onnx_success": true
+    },
+    "gnn_anatomical_meanpool": {
+      "checkpoint_path": "experiments/e3/gnn_anatomical_meanpool/checkpoint.pt",
+      "onnx_success": true
+    }
   }
 }

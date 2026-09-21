@@ -28,6 +28,16 @@ Identity control: `A_hat = I`, 48 nodes, no edges.
 ONNX export of an untrained GNN **succeeded** (opset 17, input shape [1, 48, 4], readout `flatten`, exporter `torch.onnx.export(dynamo=False)`).
 It ran on an untrained, randomly initialised model with the flatten head, before any training loop, per the re-grooming's first acceptance criterion: the head shape changed from `Linear(32, 3)` to `Linear(1536, 3)`, so the first run's export result does not carry over. The export target went to a temp directory and was not kept. This is not RSCH-6's export verification (parity, benchmarking, manifest), which belongs to the Export Verifier once a winning model exists.
 
+## Checkpoints & ONNX export
+Each arm above is also fit once more on the full dataset and checkpointed:
+
+| arm | checkpoint | onnx export |
+|---|---|---|
+| `gnn_anatomical` | `experiments/e3/gnn_anatomical/checkpoint.pt` | PASS |
+| `gnn_random_ablation` | `experiments/e3/gnn_random_ablation/checkpoint.pt` | PASS |
+| `gnn_identity` | `experiments/e3/gnn_identity/checkpoint.pt` | PASS |
+| `gnn_anatomical_meanpool` | `experiments/e3/gnn_anatomical_meanpool/checkpoint.pt` | PASS |
+
 ## Results
 
 ### mlp (E2, carried over for comparison)
