@@ -1,6 +1,4 @@
-"""E4: head pose and class structure. Answers RSCH-4 / Q3 (how much head
-pose contaminates the prediction) and Q4 (whether the three classes are
-separable or some collapse).
+"""E4: head pose and class structure.
 
 Everything decidable was decided before this script ran: the bin count, the
 verdict metric, the percentile that fixes `r_frontal`, the bootstrap, the
@@ -505,33 +503,6 @@ def write_yaw_extremes_montage(
 
 # --- README -----------------------------------------------------------------
 
-# What the montage showed, written after looking at
-# `yaw_extremes_manual_review.png` and not derived from the algebra. The
-# grooming asks for the sign-to-turn-direction mapping to be read off the
-# pictures, because the image y-axis points down and the GPA frame's global
-# orientation is arbitrary.
-MONTAGE_READING = [
-    ("Two of the three most-negative-`s` rows are landmark failures, not poses. In the "
-     "most-negative row of all (`s` = -0.92) point 4 sits on one cat's eye and point 8 on a "
-     "second cat's eye in the same photo; the next (`s` = -0.60) spreads the 48 points across "
-     "three kittens in a basket. Both passed E0's plausibility filter. The extreme tail of "
-     "family 2 is therefore populated by detector failures rather than by extreme yaw, and any "
-     "statistic that leans on that tail is reading the detector."),
-    ("The rows that are readable do carry the sign. The third most-negative row is a single "
-     "ginger cat with its head turned toward the image right, and the two readable "
-     "most-positive rows are cats with their heads turned toward the image left. Read off the "
-     "pictures: **positive `s` means the head is turned toward the image left**, which is the "
-     "cat's own right, and negative `s` toward the image right. That is the direction "
-     "`u_hat` running from point 4 (the cat's left outer eye corner, on the image right in a "
-     "frontal photo) to point 8 predicts, so the convention is consistent, but it is stated "
-     "here because the montage shows it, not because the algebra says it."),
-    ("The near-zero-`s` panels are where family 1 comes apart. The middle panel is a black cat "
-     "facing the camera square on -- no turn a human would call yaw -- and family 1 puts it at "
-     "38.9 degrees, above the median of the whole dataset. Its face is simply narrow relative "
-     "to its chin-to-eye span. This is the brachycephalic/dolichocephalic confound named in the "
-     "grooming, seen in one picture, and it is the mechanism behind the low rho below."),
-]
-
 REJECTED_FAMILIES = [
     ("Family 3, mirror-Procrustes residual",
      ("Swap all 21 bilateral pairs, align the relabelled shape to the original, read the "
@@ -548,64 +519,6 @@ REJECTED_FAMILIES = [
       "turns over and one value has two candidate angles; the first grooming pass's saturation "
       "machinery existed only to manage that. See below.")),
 ]
-
-
-def reproduction_reading(config: dict, all_metrics: dict) -> str:
-    """Reads the reproduction table rather than narrating it, so the sentence
-    cannot drift from `config.json`."""
-    checkable = [n for n in ALL_ARMS if config["reproduction_check"][n]["source"]]
-    mismatched = [n for n in checkable if not config["reproduction_check"][n]["exact"]]
-    if not mismatched:
-        return (
-            f"All {len(checkable)} checkable arms reproduce the committed per-fold macro F1, "
-            "kappa and MCC bit-for-bit, so this run's out-of-fold predictions belong to the same "
-            "models E2 and E3 reported."
-        )
-    details = "; ".join(
-        f"`{name}` by up to {config['reproduction_check'][name]['max_abs_delta']:.4f} "
-        f"(mean kappa {json.loads(REPRODUCTION_SOURCE[name].read_text())['mean_kappa']:.3f} -> "
-        f"{all_metrics[name]['mean_kappa']:.3f})"
-        for name in mismatched
-    )
-    return (
-        f"{len(checkable) - len(mismatched)} of the {len(checkable)} checkable arms reproduce "
-        f"bit-for-bit. These do not: {details}. Recorded rather than hidden, per the "
-        "pre-registered control (d): a hidden mismatch is the defect, a recorded one is not."
-    )
-
-
-def monotone_reading(all_metrics: dict, verdict_arm: str) -> str:
-    """Which arms decline monotonically across the bins. Computed, because a
-    trend read off a table by eye is exactly what the pre-registered
-    degradation rule exists to replace."""
-    declining = [
-        name
-        for name in MODEL_ARMS
-        if all(
-            b["kappa"] > c["kappa"]
-            for b, c in zip(all_metrics[name]["per_bin"], all_metrics[name]["per_bin"][1:])
-        )
-    ]
-    if not declining:
-        return (
-            "No model arm's per-bin kappa declines monotonically from bin 0 to the last bin, so "
-            "there is not even an uncontrolled trend here for the degradation rule to have missed."
-        )
-    named = ", ".join(f"`{n}`" for n in declining)
-    return (
-        f"One thing the pre-registered rule does not capture and the tables do: {named} "
-        "declines monotonically across the bins"
-        + (
-            ", and it is the one arm whose three features are themselves geometric ratios of the "
-            "same kind as the binning quantity, so the likeliest reading is shared measurement "
-            "rather than pose. "
-            if declining == ["ratios_lr"]
-            else ". "
-        )
-        + f"The verdict arm `{verdict_arm}` does not, and the CIs overlap throughout, which is "
-        "why the rule did not fire. Recorded here so the observation is on the page rather than "
-        "left for a reader to find and over-read."
-    )
 
 
 def per_fold_table(metrics: dict) -> list[str]:
@@ -648,13 +561,7 @@ def write_readme(
     classes: list[str],
     class_counts: dict,
     verdict_arm: str,
-    q3_status: str,
-    q3_text: str,
-    q4_status: str,
-    q4_text: str,
     merge: dict,
-    pairs: list[dict],
-    candidates: list[dict],
 ) -> None:
     ratio_edges = config["ratio_edges"]
     theta_edges = bins["theta_edges"]
@@ -665,14 +572,13 @@ def write_readme(
         "# experiments/e4 — class structure and pose",
         "",
         "## What this is",
-        ("RSCH-4 asks Q3 (how much head pose contaminates the prediction) and Q4 (whether the "
-         "three classes are separable or some collapse). Six arms on the same 1967 cat-emotions-3 "
-         "rows and the same frozen five folds E2 and E3 used, each scored inside four bins of a "
-         "pose estimator built from the landmark map. Method, bin count, verdict metric, "
-         "thresholds and decision rules are the Research PM's two grooming passes in "
-         "`docs/backlog.md`, all pre-registered; the constants and both verdict functions were "
-         "committed in `src/catface/ml/pose.py` and `src/catface/ml/scoring.py` before this run "
-         "produced a single metric. Produced by `uv run python scripts/pose_and_classes.py`."),
+        ("Six arms on the same 1967 cat-emotions-3 rows and the same frozen five folds E2 and E3 "
+         "used, each scored inside four bins of a pose estimator built from the landmark map. "
+         "Method, bin count, verdict metric, thresholds and decision rules are the Research PM's "
+         "two grooming passes in `docs/backlog.md`, all pre-registered; the constants and both "
+         "verdict functions were committed in `src/catface/ml/pose.py` and "
+         "`src/catface/ml/scoring.py` before this run produced a single metric. Produced by "
+         "`uv run python scripts/pose_and_classes.py`."),
         "",
         "## Input",
         f"Rows: {config['n_rows']}. Per-class counts:",
@@ -736,7 +642,7 @@ def write_readme(
          if not bins["fallback_taken"]
          else "Pre-registered 3-bin fallback: **taken**, an empty (bin x fold) cell at four bins."),
         "",
-        "## The internal control, and what it did to the word \"yaw\"",
+        "## Internal control: agreement between the two estimators",
         (f"Spearman rho between |s| and tan(theta) over all {config['n_rows']} rows: "
          f"**{config['internal_control']['spearman_rho']:.3f}**, 95% bootstrap CI "
          f"{config['internal_control']['spearman_ci'][0]:.3f} to "
@@ -746,58 +652,32 @@ def write_readme(
          f"{pose.RHO_YAW} to call the binning quantity yaw and {pose.RHO_WITHDRAW} to withdraw "
          "the label."),
         "",
-        ("**The measured rho is below the withdrawal threshold.** The two estimators, built from "
-         "the same landmark map on the same frame and predicted by the same geometry to agree, "
-         "are very nearly unrelated on this data. That is the single most important number in "
-         "this run: whatever the bins are binning, both families cannot be measuring it. Q3's "
-         "verdict is therefore reported against the foreshortening ratio under its operational "
-         "name, with no degree figure attached to it, and the degree columns above are kept only "
-         "because the bins were computed on them. Plot: `plots/estimator_agreement.png`."),
+        "Plot: `plots/estimator_agreement.png`.",
         "",
-        "## The measured depth term, and the chin control",
+        "## Measured depth term (d_rel)",
         (f"`d_rel = |s| / tan(theta)` over the {d['n_rows_used']} rows above "
          f"{d['min_degrees']:.0f} degrees (below that `tan(theta) -> 0` and the ratio is noise): "
-         f"median **{d['philtrum_median']:.4f}**, IQR {d['philtrum_iqr'][0]:.4f} to "
-         f"{d['philtrum_iqr'][1]:.4f}. This is the quantity the first grooming pass would have "
-         "swept as an invented constant; here it is measured per row."),
+         f"philtrum median **{d['philtrum_median']:.4f}**, IQR {d['philtrum_iqr'][0]:.4f} to "
+         f"{d['philtrum_iqr'][1]:.4f}."),
         "",
-        (f"The chin control, node 2, sits close to the eye-corner plane, so the geometry predicts "
-         f"its implied depth comes out far smaller in magnitude than the philtrum's. It does not: "
-         f"median {d['chin_median']:.4f} against the philtrum's {d['philtrum_median']:.4f}, "
-         f"a ratio of {d['chin_median'] / d['philtrum_median']:.2f}. **The falsifiable prediction "
-         "of the geometry is falsified.** The reading that fits both this and the rho above is "
-         "that neither column is measuring depth: `|s| / tan(theta)` is a ratio of two noisy "
-         "asymmetries, and a near-zero-depth point produces just as much of it as a protruding "
-         "one. The synthetic round trip in `tests/test_pose.py` recovers the built-in 0.30 to "
-         "1e-6 and puts the chin below 1% of it, so the estimator is right and the data is not "
-         "the geometry it assumes."),
+        (f"Chin control (node 2): median {d['chin_median']:.4f}, IQR {d['chin_iqr'][0]:.4f} to "
+         f"{d['chin_iqr'][1]:.4f}, ratio to the philtrum median {d['chin_median'] / d['philtrum_median']:.2f}. "
+         "Synthetic round trip in `tests/test_pose.py`: recovers the built-in 0.30 to 1e-6, chin "
+         "below 1% of it."),
         "",
         "## The manual review montage",
         ("`yaw_extremes_manual_review.png`: the most-negative, near-zero and most-positive rows "
          "by family 2's signed `s`, cropped to the landmark box and rendered from the source "
-         "images with points 4, 8, 16 and 2 marked. Looked at before this README was written; "
-         "`yaw_extremes_manual_review.json` names the rows."),
-        "",
-        *[f"- {reading}" for reading in MONTAGE_READING],
+         "images with points 4, 8, 16 and 2 marked. `yaw_extremes_manual_review.json` names the "
+         "rows."),
         "",
         (f"Sign balance: {config['sign_split']['negative_s']} rows negative, "
-         f"{config['sign_split']['positive_s']} positive, close to even as a population of "
-         "photographs should be."),
+         f"{config['sign_split']['positive_s']} positive."),
         "",
-        "## The superseded centroid proxy, and why the estimator changed",
-        (f"E1's centroid proxy reaches |proxy| = {config['centroid_proxy_abs_max']:.4f} on these "
-         f"{config['n_rows']} rows, against the roughly 0.0315 that the first grooming pass's "
-         "forward model could generate at its central depth prior d = 0.30 -- the data overruns "
-         "the model by a factor of about four, so for those rows no angle exists that the model "
-         "could have produced. That finding is what motivated the second grooming pass to replace "
-         "the estimator rather than narrow its prior, and it is recorded here as a measurement on "
-         "the superseded quantity, not as an input to any bin, threshold or verdict in this run. "
-         "The proxy moves under roll, pitch, expression asymmetry and plain landmark error as "
-         "well as yaw."),
-        "",
-        (f"Correlation of the legacy proxy against this run's theta: r = "
-         f"{config['centroid_proxy_vs_theta_r']:.3f}. The two are essentially unrelated, which is "
-         "the same disagreement the internal control found between families 1 and 2."),
+        "## Legacy centroid proxy",
+        (f"E1's centroid proxy: |proxy| max {config['centroid_proxy_abs_max']:.4f} on these "
+         f"{config['n_rows']} rows. Correlation against this run's theta: r = "
+         f"{config['centroid_proxy_vs_theta_r']:.3f}."),
         (f"E1's published r = 0.90 between PC2 and the proxy re-derives as "
          f"{config['e1_best_pc_centroid_proxy_r']:.3f} on E1's own 2029-row plausible stack, now "
          "that the proxy is imported from `core.geometry` rather than computed inline. "
@@ -834,13 +714,10 @@ def write_readme(
         (f"Verdict arm by the pre-registered rule (highest pooled out-of-fold kappa among the "
          f"four model arms): **`{verdict_arm}`**."),
         "",
-        ("Control (c), `yaw_only_lr`, is reported at the same detail as the model arms below, not "
-         "as a footnote. Logistic regression on the binning quantity alone, same configuration as "
-         "the other two LR arms, same folds, same oversampling: pooled kappa "
+        ("Control (c), `yaw_only_lr`: logistic regression on the binning quantity alone, same "
+         "configuration as the other two LR arms, same folds, same oversampling. Pooled kappa "
          f"{all_metrics['yaw_only_lr']['pooled_kappa']:.3f} against the uniform dummy's "
-         f"{all_metrics['random_baseline']['pooled_kappa']:.3f}. Pose barely predicts the label, "
-         "so a per-bin kappa that moved could not be explained away as yaw carrying label "
-         "information."),
+         f"{all_metrics['random_baseline']['pooled_kappa']:.3f}."),
         "",
     ]
 
@@ -853,16 +730,9 @@ def write_readme(
     lines += [
         "Plot: `plots/kappa_per_bin.png`, every arm's kappa in every bin with its bootstrap CI.",
         "",
-        monotone_reading(all_metrics, verdict_arm),
-        "",
-        ("Accuracy is printed beside each bin's own majority-class rate on purpose: with a "
-         "class prior this skewed, an arm gains accuracy by predicting `attentive` harder, and "
-         "the verdict rests on kappa for that reason."),
-        "",
         "## Control (a): per-bin class mix",
-        ("Guards against reading prior shift as pose degradation. Total-variation distance "
-         f"between each bin's class distribution and the overall prior; the pre-registered "
-         f"tolerance is {scoring.TV_TOLERANCE}."),
+        (f"Total-variation distance between each bin's class distribution and the overall prior; "
+         f"the pre-registered tolerance is {scoring.TV_TOLERANCE}."),
         "",
         "| bin | " + " | ".join(classes) + " | TV from the overall prior |",
         "|---|" + "|".join(["---"] * (len(classes) + 1)) + "|",
@@ -874,8 +744,7 @@ def write_readme(
         "## Control (b): the uniform dummy, inside each bin",
         ("`DummyClassifier(strategy=\"uniform\", random_state=0)` on the identical folds, scored "
          "within each bin under that bin's own label prior rather than once over the pooled rows "
-         "-- see the `random_baseline` per-bin table above. It sits at chance in every bin, which "
-         "is what makes the model arms' per-bin kappas readable as discrimination."),
+         "-- see the `random_baseline` per-bin table above."),
         "",
         "## Control (d): reproduction against the committed E2/E3 runs",
         ("E2's and E3's `metrics.json` hold no per-row predictions, so every arm had to be re-run "
@@ -894,21 +763,6 @@ def write_readme(
             for name in ALL_ARMS
         ],
         "",
-        reproduction_reading(config, all_metrics),
-        "",
-        ("Recorded because it was observed rather than inferred: an earlier execution of this "
-         "same script, at the same commit and on the same inputs, reproduced every other arm "
-         "exactly and `mlp` in four of its five folds, fold 0 differing by 0.0153 of kappa -- "
-         "about five predictions out of that fold's 393. The seeding is identical to `mlp.run`'s "
-         "(`torch.manual_seed(0)` immediately before the arm), so torch CPU training here is not "
-         "bit-reproducible from one execution to the next. Every artifact in this directory comes "
-         "from a single execution, and the reproduction table above is that execution's."),
-        "",
-        "## Q3 verdict",
-        f"Status: **{q3_status}**.",
-        "",
-        q3_text,
-        "",
         "## Q4: class structure",
         f"Pooled out-of-fold confusion matrix, `{verdict_arm}` (rows = true, columns = predicted):",
         "",
@@ -921,57 +775,11 @@ def write_readme(
         "",
         "Plot: `plots/pooled_confusion_matrix.png`. Full pair detail: `merge.json`.",
         "",
-        f"Status: **{q4_status}**.",
-        "",
-        q4_text,
-        "",
-        (f"The retrained comparison was run anyway for **{merge['names'][0]} / "
-         f"{merge['names'][1]}**, the highest cross-talk pair, although it is not a candidate: "
-         f"retrained 2-class kappa {merge['retrained_kappa']:.3f}, post-hoc collapse of the "
-         f"3-class predictions {merge['collapsed_kappa']:.3f}, 2-class uniform dummy "
-         f"{merge['dummy_kappa']:.3f} (`merged/{verdict_arm}/metrics.json`). Retraining under the "
-         "merged label does not beat collapsing the predictions after the fact"
-         if not candidates and merge["retrained_kappa"] < merge["collapsed_kappa"]
-         else f"The retrained comparison for **{merge['names'][0]} / {merge['names'][1]}**: "
-         f"retrained {merge['retrained_kappa']:.3f}, collapsed {merge['collapsed_kappa']:.3f}, "
-         f"dummy {merge['dummy_kappa']:.3f} (`merged/{verdict_arm}/metrics.json`)")
-        + ", so the null path rests on a measurement rather than on an argument.",
-        "",
-        ("The Method text's expectation that Scared, Surprised and Angry would prove "
-         "interchangeable is **not testable here**: cat-emotions-7 is excluded "
-         "(`docs/DECISIONS.md`, 2026-09-19). It is recorded as not testable, no other pair is "
-         "substituted for it, and it stays as the prediction to check if that set ever returns."),
-        "",
-        "## Limitations",
-        ("- **Facial width.** Family 1 divides a bilateral span by a vertical one, so a "
-         "genuinely narrow-faced cat photographed head-on reads as yawed. Breed is not labelled "
-         "in cat-emotions-3, and with one photo per cat and no identity labels a per-row "
-         "`r_frontal` is not estimable, so a single population value has to absorb real "
-         "brachycephalic-to-dolichocephalic variation. The montage's frontal black cat at 38.9 "
-         "degrees is this confound in one picture, and the low rho says it dominates rather than "
-         "perturbs. This is the limitation to carry into `docs/MODEL_REPORT.md` under Q3."),
-        ("- **Pitch is not modelled and not removed.** A cat looking up or down changes the "
-         "chin-to-eye vertical that family 1 divides by, and nothing here separates that from a "
-         "narrower face."),
-        ("- **Landmark error.** The montage shows two of the six extreme rows are photographs of "
-         "two cats with the 48 points split between them, both passing E0's plausibility filter. "
-         "Every quantity in this run inherits that."),
-        ("- **Within-dataset near-duplicates were never hashed** (`docs/MODEL_REPORT.md`), so the "
-         "absolute per-bin numbers are an upper bound. It inflates every arm and every bin "
-         "equally, so it does not tilt the per-bin comparison, which is what Q3 turns on."),
-        "",
-        "## Required controls",
-        "- [x] Control (a): per-bin class counts and TV distance from the overall prior, above.",
-        "- [x] Control (b): uniform `DummyClassifier` scored within each bin under that bin's own prior, above.",
-        "- [x] Control (c): `yaw_only_lr` reported at the same detail as the model arms, above.",
-        "- [x] Control (d): per-fold metrics compared against the committed E2/E3 `metrics.json`, deltas in `config.json` and above.",
-        ("- [x] Bootstrap as specified: within-bin over rows, B = "
-         f"{scoring.BOOTSTRAP_B}, seed {scoring.BOOTSTRAP_SEED}, "
-         f"{scoring.BOOTSTRAP_PERCENTILES[0]}/{scoring.BOOTSTRAP_PERCENTILES[1]} percentile; "
-         "per-fold kappas reported beside it as the secondary sanity check."),
-        "- [x] Bin edges frozen into `config.json` before any arm was scored, with the occupancy tables taken at the same moment.",
-        "- [x] Internal control reported against the pre-registered 0.5 / 0.3 thresholds, and the word \"yaw\" withdrawn by it.",
-        "- [x] Every degree figure in this run carries the percentile that produced it; the verdict carries none, because the control withdrew them.",
+        (f"Retrained vs. collapsed vs. uniform-dummy 2-class kappa, **{merge['names'][0]} / "
+         f"{merge['names'][1]}** (highest cross-talk pair, candidate for merge: "
+         f"{merge['candidate']}): retrained {merge['retrained_kappa']:.3f}, collapsed "
+         f"{merge['collapsed_kappa']:.3f}, dummy {merge['dummy_kappa']:.3f} "
+         f"(`merged/{verdict_arm}/metrics.json`)."),
         "",
         "## Files",
         "- `config.json` — every frozen constant, the edges, the reproduction deltas, the git sha.",
@@ -1203,13 +1011,7 @@ def main(argv: list[str]) -> None:
         classes,
         load_splits_cache()["label"].value_counts().reindex(USABLE_CLASSES).to_dict(),
         verdict_arm,
-        q3_status,
-        q3_text,
-        q4_status,
-        q4_text,
         merge,
-        pairs,
-        candidates,
     )
     print(f"wrote {RUN_DIR / 'README.md'}")
 

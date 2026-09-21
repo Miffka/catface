@@ -139,7 +139,7 @@ def write_readme(
     n_plausible: int,
     class_counts: dict[str, int],
     pca: PCA,
-    confound_findings: dict[str, tuple[int, float] | None],
+    confound_correlations: dict[str, tuple[int, float]],
     separation_ratios: list[float],
     confound_plot_written: bool,
 ) -> None:
@@ -151,9 +151,8 @@ def write_readme(
         "",
         "## What this is",
         "Procrustes alignment + PCA over the E0 landmark cache, cat-emotions-3 only,",
-        "plausible rows only. Answers RSCH-1: is there visible class signal before",
-        "training anything, and does any early PC track a pose confound? Also writes",
-        "`models/class_means.json`. Produced by `uv run python scripts/shape_space.py`.",
+        "plausible rows only. Also writes `models/class_means.json`. Produced by",
+        "`uv run python scripts/shape_space.py`.",
         "",
         "## Input",
         f"cat-emotions-3 total rows: {total_ce3}. Plausible (used): {n_plausible}.",
@@ -170,15 +169,11 @@ def write_readme(
         "Plot: `plots/pc_explained_variance.png`.",
         "",
         "## Pose confound check",
-        f"Threshold: a PC is judged to visibly track a confound at |r| > {CONFOUND_R_THRESHOLD}.",
+        f"Plot threshold: |r| > {CONFOUND_R_THRESHOLD}.",
     ]
 
-    for proxy_name, finding in confound_findings.items():
-        if finding is None:
-            lines.append(f"- **{proxy_name}**: no PC exceeds |r| > {CONFOUND_R_THRESHOLD}; none tracks it.")
-        else:
-            pc_index, r = finding
-            lines.append(f"- **{proxy_name}**: PC{pc_index + 1} tracks it, r = {r:.2f}.")
+    for proxy_name, (pc_index, r) in confound_correlations.items():
+        lines.append(f"- **{proxy_name}**: strongest at PC{pc_index + 1}, r = {r:.2f}.")
 
     lines += [
         "",
@@ -196,27 +191,7 @@ def write_readme(
         "|---|---|",
         *[f"| PC{i + 1} | {separation_ratios[i]:.3f} |" for i in range(N_COMPONENTS)],
         "",
-    ]
-
-    max_ratio = max(separation_ratios)
-    best_pc = separation_ratios.index(max_ratio) + 1
-    if max_ratio > 0.1:
-        lines.append(
-            f"Classes show some visible separation, strongest at PC{best_pc} "
-            f"(ratio {max_ratio:.3f}); see `plots/pc_scatter_grid.png`."
-        )
-    else:
-        lines.append(
-            f"Classes do not visibly separate in the first six PCs — the best ratio "
-            f"(PC{best_pc}, {max_ratio:.3f}) is small; see `plots/pc_scatter_grid.png`."
-        )
-
-    lines += [
-        "",
-        "## Stop condition",
-        "NOT triggered — RSCH-1 names no stop condition (\"this is a look, not a gate\"),",
-        "per `docs/backlog.md` and `docs/research_process.md`'s instruction to read the",
-        "stop condition before closing.",
+        "Plot: `plots/pc_scatter_grid.png`.",
         "",
         "## models/class_means.json",
         f"Covers exactly the three usable classes: {', '.join(USABLE_CLASSES)}.",
@@ -257,21 +232,18 @@ def main(argv: list[str]) -> None:
     ear_position, head_yaw = pose_confound_proxies(aligned)
     proxies = {"ear_position": ear_position, "head_yaw": head_yaw}
 
-    confound_findings: dict[str, tuple[int, float] | None] = {}
+    confound_correlations: dict[str, tuple[int, float]] = {}
     strongest: tuple[str, int, float] | None = None
     for proxy_name, proxy in proxies.items():
-        best_pc, best_r = None, 0.0
+        best_pc, best_r = 0, 0.0
         for pc in range(N_COMPONENTS):
             r = float(np.corrcoef(scores[:, pc], proxy)[0, 1])
             print(f"  corr(PC{pc + 1}, {proxy_name}) = {r:.3f}")
             if abs(r) > abs(best_r):
                 best_pc, best_r = pc, r
-        if best_pc is not None and abs(best_r) > CONFOUND_R_THRESHOLD:
-            confound_findings[proxy_name] = (best_pc, best_r)
-            if strongest is None or abs(best_r) > abs(strongest[2]):
-                strongest = (proxy_name, best_pc, best_r)
-        else:
-            confound_findings[proxy_name] = None
+        confound_correlations[proxy_name] = (best_pc, best_r)
+        if abs(best_r) > CONFOUND_R_THRESHOLD and (strongest is None or abs(best_r) > abs(strongest[2])):
+            strongest = (proxy_name, best_pc, best_r)
 
     plot_explained_variance(pca, PLOTS_DIR / "pc_explained_variance.png")
     plot_pc_scatter_grid(scores, subset["class"], PLOTS_DIR / "pc_scatter_grid.png")
@@ -293,7 +265,7 @@ def main(argv: list[str]) -> None:
 
     all_class_counts = subset["class"].value_counts().to_dict()
     total_ce3 = int((pd.read_parquet(CACHE_PATH)["dataset"] == "cat-emotions-3").sum())
-    write_readme(total_ce3, len(subset), all_class_counts, pca, confound_findings, separation_ratios, confound_plot_written)
+    write_readme(total_ce3, len(subset), all_class_counts, pca, confound_correlations, separation_ratios, confound_plot_written)
     print(f"wrote {README_PATH}")
 
 

@@ -1,8 +1,7 @@
 """E2: run all three baseline models (ratios+LR, coords+LR, coords+MLP)
 over the identical stratified 5-fold split, write metrics/config per run
 directory, confusion-matrix and macro-F1-comparison plots, and the E2
-README. Answers RSCH-2 / Q2: does a learned model beat three geometric
-ratios fed to logistic regression?
+README.
 
 Usage: uv run python scripts/baselines.py
 """
@@ -75,33 +74,6 @@ def plot_macro_f1_comparison(all_metrics: dict[str, dict], out_path: Path) -> No
     plt.close(fig)
 
 
-def q2_verdict(all_metrics: dict[str, dict]) -> tuple[bool, str]:
-    m1, m3 = all_metrics["ratios_lr"]["mean_macro_f1"], all_metrics["mlp"]["mean_macro_f1"]
-    std3 = all_metrics["mlp"]["std_macro_f1"]
-    diff = abs(m1 - m3)
-    matches = diff <= std3
-    verdict = "MATCH" if matches else "NO MATCH"
-    comparison = "within" if matches else "beyond"
-    if matches:
-        reading = (
-            "A match is a valid negative answer to Q2 under RSCH-2's stop condition, not a "
-            "failure: the coordinate-level model finds nothing past what the three hand-built "
-            "ratios already capture."
-        )
-    else:
-        reading = (
-            "The MLP clears the three-ratio baseline by more than one fold's worth of its own "
-            "noise, so Q2's answer here is that the learned model does find signal past eye "
-            "aperture, ear angle, and muzzle spread."
-        )
-    sentence = (
-        f"Model (1) ratios_lr scores mean macro F1 {m1:.3f}. Model (3) mlp scores "
-        f"{m3:.3f}, std {std3:.3f} across folds. The gap between them is {diff:.3f}, "
-        f"{comparison} one CV std of model (3)'s macro F1: **{verdict}**. {reading}"
-    )
-    return matches, sentence
-
-
 def model_results_section(name: str, metrics: dict) -> list[str]:
     labels = metrics["labels"]
     cm = metrics["confusion_matrix"]
@@ -134,7 +106,7 @@ def random_baseline_section(metrics: dict) -> list[str]:
         "## Random-classifier reference",
         ("`DummyClassifier(strategy=\"uniform\", random_state=0)`, run on the identical "
         "5-fold splits as the three models above -- a chance-level reference, excluded "
-        "from the Q2 verdict and from the macro-F1 comparison plot."),
+        "from the macro-F1 comparison plot."),
         "",
         "| metric | mean +/- std |",
         "|---|---|",
@@ -153,24 +125,17 @@ def write_readme(
     config: dict,
     input_counts: dict[str, int],
 ) -> None:
-    _matches, verdict_sentence = q2_verdict(all_metrics)
-
     lines = [
         "# experiments/e2 — baselines",
         "",
         "## What this is",
-        ("RSCH-2 asks Q2: does a learned model beat two geometric ratios (eye aperture, ear "
-        "angle) fed to logistic regression? That was the original framing at grooming. Per "
-        "direct user instruction after grooming (2026-09-19), model (1) below was extended "
-        "to a third geometric feature, muzzle spread (`muzzle_spread_ratio`), so it no longer "
-        "matches Q2's original two-ratio framing exactly -- see `docs/backlog.md` RSCH-2. Per "
-        "a second direct user instruction (2026-09-20), the balancing mechanism changed from "
-        "inverse-frequency class weights to random oversampling of minority classes on the "
-        "training folds only (`oversample_to_balance`), and each model now also reports "
-        "Cohen's kappa and MCC alongside macro F1, with a uniform-random classifier run as a "
-        "chance-level reference. This run trains three baseline models on cat-emotions-3, "
-        "plausible rows only, the three usable classes (attentive, relaxed, uncomfortable), "
-        "on identical stratified 5-fold splits. Produced by "
+        ("Three baseline models -- ratios+LR (`ratios_lr`, three geometric ratios: eye "
+        "aperture, ear angle, muzzle spread), coords+LR (`coords_lr`), coords+MLP (`mlp`) -- "
+        "trained on cat-emotions-3, plausible rows only, the three usable classes (attentive, "
+        "relaxed, uncomfortable), on identical stratified 5-fold splits. Balancing: random "
+        "oversampling of minority classes on the training folds only "
+        "(`oversample_to_balance`). Each model reports macro F1, Cohen's kappa and MCC, with "
+        "a uniform-random classifier run as a chance-level reference. Produced by "
         "`uv run python scripts/make_splits.py` then `uv run python scripts/baselines.py`."),
         "",
         "## Input",
@@ -188,24 +153,6 @@ def write_readme(
     lines += random_baseline_section(random_metrics)
 
     lines += [
-        "## Required controls",
-        ("- [x] Identical splits across all three models: all three read "
-        "`data/cache/splits.csv`, written once by `scripts/make_splits.py`."),
-        ("- [x] 5-fold: `n_splits=5` in `catface.ml.splits.make_splits` and "
-        "`catface.ml.cv.cross_validate`."),
-        "- [x] Macro F1 reported (not accuracy alone): per-fold and mean +/- std, above.",
-        "- [x] Confusion matrix per model: above, summed over folds.",
-        ("- [x] Balancing: random oversampling of minority classes on the training folds "
-        "only (`catface.ml.cv.oversample_to_balance`, via `sklearn.utils.resample`), applied "
-        "inside `cross_validate` before each fold's `.fit()`; test folds keep the original "
-        "imbalanced distribution untouched."),
-        "- [x] Cohen's kappa and MCC reported alongside macro F1, per fold and mean +/- std.",
-        ("- [x] Random-classifier reference included: `DummyClassifier(strategy=\"uniform\")` "
-        "on the identical folds, reported separately, excluded from the Q2 verdict."),
-        "",
-        "## Q2 verdict",
-        verdict_sentence,
-        "",
         "## Citations",
         ("- CatFLW (landmark scheme, Finka et al.) and the Finka landmark scheme: see "
         "`docs/MODEL_REPORT.md` Citations."),

@@ -1,8 +1,7 @@
 """E3: dense graph conv over the anatomical adjacency, against a random
 adjacency, an identity (no message passing) control, a mean-pool arm that
 keeps the first run's readout defect on the record, and a chance-level
-reference. Answers RSCH-3 / Q1: does a dense graph conv over the anatomical
-adjacency beat the E2 MLP?
+reference.
 
 Arms, method and acceptance criteria follow the Research PM's re-grooming of
 2026-09-20 in `docs/backlog.md`, which supersedes RSCH-3's original method.
@@ -118,60 +117,6 @@ def plot_metric_comparison(all_metrics: dict[str, dict], metric: str, out_path: 
     plt.close(fig)
 
 
-def q1_verdict(mlp_metrics: dict, anatomical: dict, random_ablation: dict, identity: dict) -> tuple[bool, str]:
-    """Decided on kappa, per the re-grooming's defect 4: between two
-    near-chance classifiers macro F1 tracks the prediction marginals rather
-    than discrimination, so it cannot carry the verdict. Macro F1 is reported
-    beside each kappa."""
-    kappa, std = anatomical["mean_kappa"], anatomical["std_kappa"]
-    mlp_kappa, random_kappa = mlp_metrics["mean_kappa"], random_ablation["mean_kappa"]
-    diff_mlp, diff_random = kappa - mlp_kappa, kappa - random_kappa
-    condition_a, condition_b = diff_mlp > std, diff_random > std
-    verdict = condition_a and condition_b
-
-    def held(ok: bool) -> str:
-        return "HOLDS" if ok else "DOES NOT HOLD"
-
-    lines = [
-        (f"Condition A (beats the E2 MLP by more than the anatomical arm's own CV std): anatomical "
-         f"GNN kappa {kappa:.3f} vs. MLP {mlp_kappa:.3f}, diff {diff_mlp:+.3f}, anatomical std "
-         f"{std:.3f}: **{held(condition_a)}**. Macro F1 beside it: "
-         f"{anatomical['mean_macro_f1']:.3f} vs. {mlp_metrics['mean_macro_f1']:.3f}."),
-        (f"Condition B (beats the random-adjacency ablation by the same margin): anatomical GNN "
-         f"kappa {kappa:.3f} vs. random-adjacency {random_kappa:.3f}, diff {diff_random:+.3f}, "
-         f"anatomical std {std:.3f}: **{held(condition_b)}**. Macro F1 beside it: "
-         f"{anatomical['mean_macro_f1']:.3f} vs. {random_ablation['mean_macro_f1']:.3f}."),
-    ]
-    if verdict:
-        lines.append(
-            "Both conditions hold: **Q1 verdict: YES**, the anatomical-adjacency graph conv beats "
-            "the E2 MLP and beats a random graph of equal density."
-        )
-    else:
-        lines.append(
-            "At least one condition fails: **Q1 verdict: NO**. RSCH-3's stop condition names a "
-            "random-adjacency tie, or an anatomical GNN that does not clear the MLP, as a valid "
-            "answer that has to be reported, not a failed run."
-        )
-
-    identity_kappa = identity["mean_kappa"]
-    identity_wins = identity_kappa > max(kappa, random_kappa)
-    reading = (
-        "above both graph arms. Switching message passing off raises the score, so nothing the "
-        "anatomical arm achieves can be credited to the graph: the convolution is smoothing away "
-        "signal the same layers keep when they act per-node."
-        if identity_wins
-        else "at or below both graph arms, so the depth on its own does not account for what "
-        "they score."
-    )
-    lines.append(
-        f"Identity control (`A_hat = I`, message passing off, same depth and parameter count): "
-        f"kappa {identity_kappa:.3f} +/- {identity['std_kappa']:.3f}, macro F1 "
-        f"{identity['mean_macro_f1']:.3f} +/- {identity['std_macro_f1']:.3f} -- {reading}"
-    )
-    return verdict, "\n".join(lines)
-
-
 def model_results_section(name: str, metrics: dict) -> list[str]:
     labels = metrics["labels"]
     per_fold = zip(metrics["per_fold_macro_f1"], metrics["per_fold_kappa"], metrics["per_fold_mcc"])
@@ -217,33 +162,12 @@ def random_baseline_section(metrics: dict) -> list[str]:
     ]
 
 
-def readout_defect_section(all_metrics: dict[str, dict]) -> list[str]:
-    anatomical, meanpool = all_metrics["gnn_anatomical"], all_metrics["gnn_anatomical_meanpool"]
+def readout_defect_section() -> list[str]:
     return [
-        "## The readout defect that caused the re-groom",
-        ("The first E3 run ended `_Net.forward` in `h.mean(dim=1)`, a mean over the 48-node axis. "
-         "Node features come from `generalized_procrustes`, and `_center_scale` subtracts each "
-         "shape's centroid, so the node-axis mean of the GNN's input is zero for all 1967 rows in "
-         "all four channels. The Research PM measured 2.58e-33 of between-sample variance "
-         "surviving that readout, against 1.64e-2 for the flattened coordinates the E2 MLP reads. "
-         "The head saw a near-constant vector; only ReLU asymmetry leaked anything through."),
-        ("Q1 asks what the adjacency contributes, and that run varied adjacency and readout at "
-         "once with the readout term dominating, so its numbers could not answer the question. "
-         "`readout` is now a constructor argument on `_Net`/`GNNClassifier`, defaulting to "
-         "`flatten` (head `nn.Linear(HIDDEN * 48, N_CLASSES)`). `gnn_anatomical_meanpool` keeps "
-         "the old `mean` head so the defect stays measurable rather than described: "
-         f"{meanpool['mean_macro_f1']:.3f} macro F1 / {meanpool['mean_kappa']:.3f} kappa against "
-         f"the flatten arm's {anatomical['mean_macro_f1']:.3f} / {anatomical['mean_kappa']:.3f}, "
-         "same adjacency, same splits, same epochs."),
-        ("Two more things changed with it. `GNNClassifier.fit` no longer applies "
-         "`compute_class_weight(\"balanced\")`, and `gnn.run` now passes `oversample=True`, so "
-         "every arm here balances the way E2's MLP does and the comparison is against like. The "
-         "Q1 verdict is decided on kappa, not macro F1, because macro F1 between two chance-level "
-         "classifiers reflects their prediction marginals rather than how well either "
-         "discriminates."),
-        ("`tests/test_gnn.py` pins the readout argument: the default is `flatten`, the head is "
-         "sized `HIDDEN * 48` for it, and with `A_hat = I` the mean readout is permutation-"
-         "invariant over nodes while the flatten readout is not."),
+        "## Readout",
+        ("`flatten` is the default readout; `gnn_anatomical_meanpool` reproduces the first E3 "
+         "run's `mean` readout, which wrongly assumed the node-axis mean carried signal -- "
+         "Procrustes centering zeros it for every row."),
         "",
     ]
 
@@ -254,7 +178,6 @@ def write_readme(
     config: dict,
     input_counts: dict[str, int],
     export_result: dict,
-    verdict_text: str,
 ) -> None:
     export_line = (
         f"ONNX export of an untrained GNN **{'succeeded' if export_result['success'] else 'FAILED'}** "
@@ -268,8 +191,7 @@ def write_readme(
         "# experiments/e3 — GNN",
         "",
         "## What this is",
-        ("RSCH-3 asks Q1: does a dense graph conv over the anatomical adjacency beat the E2 MLP? "
-         "This directory holds the re-run ordered by the Research PM's re-grooming of 2026-09-20 "
+        ("This directory holds the re-run ordered by the Research PM's re-grooming of 2026-09-20 "
          "(`docs/backlog.md`), which sent the first run back on methodology. Five arms, all on the "
          "same cat-emotions-3 rows and the frozen splits in `data/cache/splits.csv`, all balanced "
          "by training-fold oversampling, and the four graph-conv arms all at the same depth and "
@@ -303,7 +225,7 @@ def write_readme(
         "## ONNX export check",
         export_line,
         ("It ran on an untrained, randomly initialised model with the flatten head, before any "
-         "training loop, per RSCH-3's method and the re-grooming's first acceptance criterion: the "
+         "training loop, per the re-grooming's first acceptance criterion: the "
          "head shape changed from `Linear(32, 3)` to `Linear(1536, 3)`, so the first run's export "
          "result does not carry over. The export target went to a temp directory and was not kept. "
          "This is not RSCH-6's export verification (parity, benchmarking, manifest), which belongs "
@@ -325,30 +247,12 @@ def write_readme(
     lines += random_baseline_section(random_metrics)
 
     lines += [
-        ("Comparison plots: `plots/kappa_comparison.png` (the metric the verdict uses) and "
-         "`plots/macro_f1_comparison.png`."),
+        "Comparison plots: `plots/kappa_comparison.png` and `plots/macro_f1_comparison.png`.",
         "",
     ]
-    lines += readout_defect_section(all_metrics)
+    lines += readout_defect_section()
 
     lines += [
-        "## Required controls",
-        ("- [x] Untrained-model ONNX export attempted and recorded before any training run, for "
-         "the flatten head: above."),
-        ("- [x] All five arms trained on the frozen splits, macro F1 + kappa + MCC + confusion "
-         "matrix, 5-fold: above."),
-        ("- [x] Readout identical across the four trained GNN arms except `gnn_anatomical_meanpool`, "
-         "which exists to vary it; balancing identical across all arms (`oversample=True`, no "
-         "in-`fit` class weights)."),
-        "- [x] `gnn_identity` reported in the same detail as the other arms.",
-        ("- [x] Q1 verdict computed on kappa with macro F1 beside it, both conditions checked: "
-         "below."),
-        "- [x] Adjacency file path and sha256 pinned in `config.json`.",
-        "- [x] No `torch_geometric` import anywhere in the run (AST-walk tested, `tests/test_gnn.py`).",
-        "",
-        "## Q1 verdict",
-        verdict_text,
-        "",
         "## Citations",
         ("- CatFLW (landmark scheme, Finka et al.) and the Finka landmark scheme: see "
          "`docs/MODEL_REPORT.md` Citations."),
@@ -425,14 +329,6 @@ def main(argv: list[str]) -> None:
     plot_metric_comparison(for_plot, "kappa", PLOTS_DIR / "kappa_comparison.png")
     plot_metric_comparison(for_plot, "macro_f1", PLOTS_DIR / "macro_f1_comparison.png")
 
-    _verdict, verdict_text = q1_verdict(
-        mlp_metrics,
-        all_metrics["gnn_anatomical"],
-        all_metrics["gnn_random_ablation"],
-        all_metrics["gnn_identity"],
-    )
-    print(verdict_text)
-
     config = {
         "seed": SEED,
         "n_splits": N_SPLITS,
@@ -452,7 +348,7 @@ def main(argv: list[str]) -> None:
     _raw_shapes, label, _split = load_raw_shapes()
     input_counts = label.value_counts().reindex(USABLE_CLASSES).to_dict()
 
-    write_readme({"mlp": mlp_metrics, **all_metrics}, random_metrics, config, input_counts, export_result, verdict_text)
+    write_readme({"mlp": mlp_metrics, **all_metrics}, random_metrics, config, input_counts, export_result)
     print(f"wrote {RUN_DIR / 'README.md'}")
 
 
