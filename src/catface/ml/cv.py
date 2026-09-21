@@ -26,6 +26,24 @@ def oversample_to_balance(X: np.ndarray, y: np.ndarray, seed: int = 0) -> tuple[
     return np.concatenate(X_blocks), np.concatenate(y_blocks)
 
 
+def fit_final_model(
+    X: np.ndarray,
+    y: np.ndarray,
+    model_fn: Callable[[], Any],
+    oversample: bool = False,
+    oversample_seed: int = 0,
+) -> Any:
+    """Fit one `model_fn()` on all of (X, y) -- the same maybe-oversample-
+    then-construct-and-fit step each `cross_validate` fold does, exposed so
+    a caller can fit "the deployed model" on the full dataset the same way.
+    Returns the fitted model."""
+    if oversample:
+        X, y = oversample_to_balance(X, y, seed=oversample_seed)
+    model = model_fn()
+    model.fit(X, y)
+    return model
+
+
 def cross_validate(
     X: np.ndarray,
     y: np.ndarray,
@@ -56,11 +74,7 @@ def cross_validate(
 
     for k in range(n_splits):
         train_mask, test_mask = split != k, split == k
-        X_train, y_train = X[train_mask], y[train_mask]
-        if oversample:
-            X_train, y_train = oversample_to_balance(X_train, y_train, seed=oversample_seed)
-        model = model_fn()
-        model.fit(X_train, y_train)
+        model = fit_final_model(X[train_mask], y[train_mask], model_fn, oversample, oversample_seed)
         pred = model.predict(X[test_mask])
         oof[test_mask] = pred
         y_test = y[test_mask]
