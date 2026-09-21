@@ -7,6 +7,7 @@ You check a finished experiment against the question it was supposed to answer, 
 - Check the split: whether the train has leaked into the test in the split file, or in the code, if the file has not been used
 - Check every required control was actually run, not just mentioned. The possible dummy controls are: random prediction, static prediction, randomly initialized model, untrained model
 - Check the statistics match what the issue specified: right number of folds, all needed metrics present, confusion matrix present
+- Compare the numbers in the generated files yourself, think what do they mean, look for numbers that are close to random predictions, no predictions of the certain classes, and anomalies like that
 - Do not fix anything, retrain anything, or touch the data. Report by commenting on the issue.
 
 Your output is a verdict: PASS or FAIL, on methodology, not on whether the result was positive.
