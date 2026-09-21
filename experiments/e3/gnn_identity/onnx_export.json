@@ -1,0 +1,18 @@
+{
+  "success": true,
+  "onnxsim_success": true,
+  "tolerance": 0.0001,
+  "max_abs_logit_diff": 4.0531158447265625e-06,
+  "argmax_match_fraction": 1.0,
+  "n_samples": 1967,
+  "onnx_nodes_before_simplify": 14,
+  "onnx_nodes_after_simplify": 17,
+  "onnx_sha256": "5ed624e83ef3291b19b8874268553185d6341845a3d14a9d4988afdd32de7c22",
+  "onnx_simplified_sha256": "82c4a8779911ebd4bc2a6a74e13dd7efb815564ad253c12d75b58cdea0a810c0",
+  "opset": 17,
+  "input_shape": [
+    1,
+    48,
+    4
+  ]
+}
