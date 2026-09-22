@@ -16,20 +16,12 @@ Rules
 - `src/catface/core` is shared by both tracks. Neither track
   reimplements letterboxing, crop margin, or Procrustes locally — if
   you need it, import it from `core`.
-- Two tracks, two processes. Figure out which one an issue belongs to
-  before picking a process file: PLAN_RESEARCH.md scope (E0–E5, model
-  questions Q1–Q5, `models/expression_head.onnx`) uses
-  `research_process.md`; everything else (API, storage, warper,
-  frontend, deploy, ops) uses `project_process.md`.
+- Two tracks, two processes. Figure out which one an issue belongs to before picking a process file: PLAN_RESEARCH.md scope (E0–E5, model questions Q1–Q5, `models/expression_head.onnx`) uses `docs/research_process.md`; everything else (API, storage, warper, frontend, deploy, ops) uses `docs/project_process.md`.
 
 Tracks
 
-- **Research** — `docs/plan-research.md` (PLAN_RESEARCH.md), process
-  in `research_process.md`, roles in `docs/team/research-*.md`
-- **Project** — `docs/plan-project.md` (PLAN_PROJECT.md), process in
-  `project_process.md`, roles in `docs/team/pm.md`,
-  `docs/team/software-engineer.md`, `docs/team/qa-engineer.md`
-  (placeholder until this track's own roles are defined)
+- **Research** — `docs/plan-research.md` (PLAN_RESEARCH.md), process in `docs/research_process.md`
+- **Project** — `docs/plan-project.md` (PLAN_PROJECT.md), process in `docs/project_process.md`
 
 Documents
 
