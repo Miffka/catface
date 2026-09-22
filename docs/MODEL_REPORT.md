@@ -129,11 +129,15 @@ The honest headline Q2 was written to test, that cat expression classification f
 
 Partly answered by E1, and the answer is more interesting than "pose leaks the label". E1 found PC1 tracking ear position (r = 0.84) and PC2 tracking head yaw (r = 0.90), both ahead of any PC carrying class signal. A Research PM diagnostic (ungroomed, see the note at the end of this section) then trained logistic regression on PC1 and PC2 alone: macro F1 0.323, kappa 0.033, which is chance. So pose is not a shortcut the classifier exploits. It is the dominant direction of shape variation, and it crowds out expression rather than standing in for it. E1's between-class over within-class variance ratio of 0.044 says the same thing from the other side.
 
-RSCH-4 still owes the yaw-degradation sentence that `core/states.py` turns into a confidence penalty.
+Q3 as originally posed in `docs/plan-research.md` — does head pose contaminate the prediction on new photos — is still open and currently unanswerable from this repository. The one substantive attempt at it, RSCH-4's 2026-09-20 out-of-fold verdict, is not reproducible: the code that computed it was deleted in commit `3b5cddb` (`docs/backlog.md`'s RSCH-4 entry, third grooming pass).
+
+What RSCH-4 actually delivered, after that grooming pass re-scoped it down, is a much narrower in-sample sanity check (Research QA PASS, 2026-09-22, third-grooming-pass re-review): two already-fitted checkpoints re-scored on the same rows they were fit on, binned by a yaw proxy. Numbers and method in `experiments/e4/README.md`; full history in `docs/backlog.md`'s RSCH-4 entry. It found no red flag — neither checkpoint degrades in the higher-yaw bins — but a check on training rows cannot speak to generalization, so this is not evidence either way about pose contamination on unseen photos. Read it as "no red flag from this check," not as an answer to Q3.
+
+`core/states.py` gets no pose-based confidence penalty from this experiment.
 
 ### Q4 — are all classes separable, or do some collapse?
 
-Partly answered, pending RSCH-4. Every E2 confusion matrix shows the same pattern: attentive and relaxed bleed into each other heavily, and uncomfortable behaves differently depending on the model. `coords_lr` recovers 62 of 107 uncomfortable rows while `ratios_lr` recovers 28. With 107 examples against 1130, no number about uncomfortable is stable, and oversampling replicates the same 107 images rather than adding information.
+**Obsolete, per `docs/DECISIONS.md` 2026-09-22.** No run to date — E2's three baselines, E3's five arms, or E4 — ever produced a class with zero predictions, so there was never evidence of collapse for a merge analysis to investigate. Not pursued further. The E2 confusion-matrix pattern already on record stays as background, not as an open question: attentive and relaxed bleed into each other heavily, and uncomfortable behaves differently depending on the model (`coords_lr` recovers 62 of 107 uncomfortable rows while `ratios_lr` recovers 28). With 107 examples against 1130, no number about uncomfortable is stable, and oversampling replicates the same 107 images rather than adding information.
 
 ### Q5 — does anything transfer to my own cat's photos?
 

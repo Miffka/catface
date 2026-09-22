@@ -6,6 +6,16 @@ was. Newest on top.
 
 ---
 
+## 2026-09-22 — Q4 (class separability / merge analysis) declared obsolete
+
+**Decided:** `PLAN_RESEARCH.md`'s Q4 ("are all classes separable, or do some collapse?") is dropped. RSCH-4's Q4 merge procedure, its pairwise cross-talk/kappa thresholds, and its null-path writeup are struck as obsolete rather than pursued further.
+
+**Why:** direct user instruction. Across every run so far — E2's three baselines, E3's five arms, E4's checks — no class ever came back with zero predictions. A real collapse between two of the three classes would show up exactly that way, as one class the model stops predicting at all, and it never has. There was never evidence of collapse for a merge procedure to investigate.
+
+**Alternative considered:** none — this is a direct instruction to stop the line of work, not a re-scoping judgment call for Research PM to weigh alternatives on.
+
+---
+
 ## 2026-09-20 — the manual class picker is `/edit`'s primary path, not a fallback
 
 **Decided:** `PLAN_PROJECT.md` M5 describes a manual class picker as what `/edit` falls back to "if the expression head is late". Reverse that. The picker is the primary way a user chooses a target expression, and it ships whether or not `models/expression_head.onnx` ever lands. If the model does land, `/predict` may show its class probabilities as a suggestion beside the picker, with the low-confidence caveat `core/states.py` already applies. It does not preselect the picker's value. No app milestone gates on classifier accuracy.
