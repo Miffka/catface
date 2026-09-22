@@ -96,40 +96,25 @@ and it costs an hour.
 
 ## Questions
 
-- **Q1** Does a graph conv over the anatomical adjacency beat an MLP on flattened
-  coordinates? Prior: maybe not at this size. The published cat pipeline flattens
-  landmarks into an autoencoder plus XGBoost, so message passing here is untried
-  rather than settled.
-- **Q2** Does the learned model beat two geometric ratios (eye aperture, ear angle)
-  fed to logistic regression? If not, the honest headline is that cat expression
-  classification from landmarks is mostly ear angle.
-- **Q3** How much does head pose contaminate the prediction? Pose and expression are
-  entangled, and internet photos vary wildly in angle.
+- **Q1** Does a graph conv over the anatomical adjacency beat an MLP on flattened coordinates? Prior: maybe not at this size. The published cat pipeline flattens landmarks into an autoencoder plus XGBoost, so message passing here is untried rather than settled.
+- **Q2** Does the learned model beat two geometric ratios (eye aperture, ear angle) fed to logistic regression? If not, the honest headline is that cat expression classification from landmarks is mostly ear angle.
+- **Q3** How much does head pose contaminate the prediction? Pose and expression are entangled, and internet photos vary wildly in angle.
 - **Q4** Are all classes separable, or do some collapse?
 - **Q5** Does anything transfer to my own cat's photos?
 
 ## Experiments
 
 ### E0 landmark cache (0.5 day)
-Run the detector over both sets, filter, cache. Plot class distribution and
-detector confidence. Look at 20 random overlays to confirm the detector works on
-this image distribution — it was trained on CatFLW, and Roboflow photos may differ.
+Run the detector over both sets, filter, cache. Plot class distribution and detector confidence. Look at 20 random overlays to confirm the detector works on this image distribution — it was trained on CatFLW, and Roboflow photos may differ.
 
-Stop condition: if the detector fails on most of these images, the whole plan
-changes, and better to find out on day one.
+Stop condition: if the detector fails on most of these images, the whole plan changes, and better to find out on day one.
 
 ### E1 shape space (0.5 day)
-Procrustes over the cached landmarks, PCA, plot the first six components. Check
-whether any component visibly tracks ear position or head yaw, and whether the
-classes separate at all in the first few PCs.
+Procrustes over the cached landmarks, PCA, plot the first six components. Check whether any component visibly tracks ear position or head yaw, and whether the classes separate at all in the first few PCs.
 
 This is the cheap look at whether the signal exists before training anything.
 
-Also write `models/class_means.json` here: the per-class mean of the aligned
-landmarks, which is one groupby over the alignment E1 already computes. The app's
-warper blocks on this file and not on the model, so producing it on day two of
-research instead of at export time is what makes PLAN_PROJECT.md's M5 fallback
-("manual class picker, everything else still works") actually true.
+Also write `models/class_means.json` here: the per-class mean of the aligned landmarks, which is one groupby over the alignment E1 already computes. The app's warper blocks on this file and not on the model, so producing it on day two of research instead of at export time is what makes PLAN_PROJECT.md's M5 fallback ("manual class picker, everything else still works") actually true.
 
 ### E2 baselines (1 day)
 Same splits for all of these, stratified by class:
