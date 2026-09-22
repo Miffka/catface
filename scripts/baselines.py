@@ -17,8 +17,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from catface.ml import coords_lr, mlp, random_baseline, ratios_lr
-from catface.ml.features import load_raw_shapes
+from catface.ml import coords_lr, cv, mlp, onnx_export, random_baseline, ratios_lr
+from catface.ml.features import load_features, load_raw_shapes, node_features
 from catface.ml.splits import SPLITS_PATH, USABLE_CLASSES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -29,10 +29,45 @@ N_SPLITS = 5
 
 MODELS = {"ratios_lr": ratios_lr, "coords_lr": coords_lr, "mlp": mlp}
 MODEL_COLORS = {"ratios_lr": "tab:blue", "coords_lr": "tab:orange", "mlp": "tab:green"}
+CHECKPOINT_EXT = {"ratios_lr": "pkl", "coords_lr": "pkl", "mlp": "pt"}
 
 
 def git_sha() -> str:
     return subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+
+
+def finalize_model(
+    name: str,
+    module,
+    X: np.ndarray,
+    features,
+    out_dir: Path,
+    mean_shape: np.ndarray | None,
+    export_onnx: bool,
+) -> dict:
+    """Fit one more `module.build_model()` on the full, oversample-balanced
+    dataset and checkpoint it -- the per-fold models `cv.cross_validate`
+    already ran are fit-and-discarded, never kept. `mean_shape` is required
+    for coords_lr/mlp (Procrustes alignment target for single-image
+    inference) and omitted for ratios_lr (ratios need no alignment)."""
+    model = cv.fit_final_model(X, features.y, module.build_model, oversample=True)
+
+    ckpt_path = out_dir / f"checkpoint.{CHECKPOINT_EXT[name]}"
+    if mean_shape is None:
+        module.save_checkpoint(model, features.classes, ckpt_path, model_name=name, git_sha=git_sha())
+    else:
+        module.save_checkpoint(
+            model, mean_shape, features.classes, ckpt_path, model_name=name, git_sha=git_sha()
+        )
+
+    onnx_success = None
+    if export_onnx:
+        onnx_result = onnx_export.export_and_verify_onnx(
+            model.model, X, out_dir, input_names=["coord_features"], output_names=["logits"]
+        )
+        onnx_success = onnx_result["success"]
+
+    return {"checkpoint_path": str(ckpt_path.relative_to(ROOT)), "onnx_success": onnx_success}
 
 
 def plot_confusion_matrix(metrics: dict, out_path: Path) -> None:
@@ -119,11 +154,32 @@ def random_baseline_section(metrics: dict) -> list[str]:
     ]
 
 
+def checkpoint_section(finalize_results: dict[str, dict]) -> list[str]:
+    def onnx_cell(result: dict) -> str:
+        if result["onnx_success"] is None:
+            return "n/a"
+        return "PASS" if result["onnx_success"] else "FAIL"
+
+    return [
+        "## Checkpoints & ONNX export",
+        "Each model above is also fit once more on the full, oversample-balanced dataset and checkpointed:",
+        "",
+        "| model | checkpoint | onnx export |",
+        "|---|---|---|",
+        *[
+            f"| `{name}` | `{result['checkpoint_path']}` | {onnx_cell(result)} |"
+            for name, result in finalize_results.items()
+        ],
+        "",
+    ]
+
+
 def write_readme(
     all_metrics: dict[str, dict],
     random_metrics: dict,
     config: dict,
     input_counts: dict[str, int],
+    finalize_results: dict[str, dict],
 ) -> None:
     lines = [
         "# experiments/e2 — baselines",
@@ -151,6 +207,8 @@ def write_readme(
         lines += model_results_section(name, all_metrics[name])
 
     lines += random_baseline_section(random_metrics)
+
+    lines += checkpoint_section(finalize_results)
 
     lines += [
         "## Citations",
@@ -180,7 +238,17 @@ def main(argv: list[str]) -> None:
         )
         sys.exit(1)
 
+    raw_shapes, label, _split = load_raw_shapes()
+    features = load_features()
+    # load_features() doesn't expose mean_shape; recomputed via the same
+    # public node_features() call it uses internally (scripts/gnn.py does
+    # the same), so coords_lr/mlp checkpoints carry the training-time
+    # Procrustes reference single-image inference needs.
+    _aligned, mean_shape = node_features(raw_shapes)
+    MODEL_X = {"ratios_lr": features.ratio_X, "coords_lr": features.coord_X, "mlp": features.coord_X}
+
     all_metrics: dict[str, dict] = {}
+    finalize_results: dict[str, dict] = {}
     for name, module in MODELS.items():
         print(f"running {name}...")
         metrics = module.run()
@@ -190,6 +258,20 @@ def main(argv: list[str]) -> None:
         (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
         print(f"  {name}: mean macro F1 = {metrics['mean_macro_f1']:.3f} +/- {metrics['std_macro_f1']:.3f}")
         plot_confusion_matrix(metrics, PLOTS_DIR / f"{name}_confusion_matrix.png")
+
+        print(f"  finalizing {name}: full-dataset checkpoint" + (" + ONNX export" if name == "mlp" else "") + "...")
+        finalize_results[name] = finalize_model(
+            name,
+            module,
+            MODEL_X[name],
+            features,
+            out_dir,
+            mean_shape=None if name == "ratios_lr" else mean_shape,
+            export_onnx=(name == "mlp"),
+        )
+        onnx_success = finalize_results[name]["onnx_success"]
+        onnx_note = "" if onnx_success is None else f", onnx export: {'PASS' if onnx_success else 'FAIL'}"
+        print(f"  checkpoint: {finalize_results[name]['checkpoint_path']}{onnx_note}")
 
     plot_macro_f1_comparison(all_metrics, PLOTS_DIR / "macro_f1_comparison.png")
 
@@ -209,13 +291,13 @@ def main(argv: list[str]) -> None:
         "n_splits": N_SPLITS,
         "classes": list(USABLE_CLASSES),
         "git_sha": git_sha(),
+        "checkpoints": finalize_results,
     }
     (RUN_DIR / "config.json").write_text(json.dumps(config, indent=2))
 
-    _raw_shapes, label, _split = load_raw_shapes()
     input_counts = label.value_counts().reindex(USABLE_CLASSES).to_dict()
 
-    write_readme(all_metrics, random_metrics, config, input_counts)
+    write_readme(all_metrics, random_metrics, config, input_counts, finalize_results)
     print(f"wrote {RUN_DIR / 'README.md'}")
 
 

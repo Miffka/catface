@@ -17,6 +17,7 @@ from catface.core.geometry import (
     eye_aspect_ratio,
     generalized_procrustes,
     muzzle_spread_ratio,
+    procrustes_align,
 )
 from catface.ml.plausibility import LEFT_EAR, LEFT_EYE, MUZZLE, RIGHT_EAR, RIGHT_EYE
 from catface.ml.splits import CACHE_PATH, load_splits_cache
@@ -52,25 +53,35 @@ def load_raw_shapes() -> tuple[np.ndarray, pd.Series, np.ndarray]:
     return raw_shapes, merged["label"], merged["split"].to_numpy()
 
 
-def ratio_features(raw_shapes: np.ndarray) -> np.ndarray:
-    """(N, 3): mean(eye_aspect_ratio) and mean(ear_angle) across left/right,
-    plus muzzle_spread_ratio, computed directly on raw (unaligned) landmarks
-    -- all three are already scale/rotation-derived ratios, not raw
+def ratio_features_one(shape: np.ndarray) -> np.ndarray:
+    """(3,): mean(eye_aspect_ratio) and mean(ear_angle) across left/right,
+    plus muzzle_spread_ratio, for a single raw (unaligned) (48,2) shape --
+    all three are already scale/rotation-derived ratios, not raw
     coordinates, so no Procrustes alignment is needed first."""
-    out = np.zeros((len(raw_shapes), 3))
-    for i, shape in enumerate(raw_shapes):
-        left_eye_center = shape[list(LEFT_EYE)].mean(axis=0)
-        right_eye_center = shape[list(RIGHT_EYE)].mean(axis=0)
-        aspect_ratio = (
-            eye_aspect_ratio(shape, LEFT_EYE) + eye_aspect_ratio(shape, RIGHT_EYE)
-        ) / 2
-        angle = (
-            ear_angle(shape, LEFT_EAR, left_eye_center, right_eye_center)
-            + ear_angle(shape, RIGHT_EAR, left_eye_center, right_eye_center)
-        ) / 2
-        spread = muzzle_spread_ratio(shape, MUZZLE, left_eye_center, right_eye_center)
-        out[i] = (aspect_ratio, angle, spread)
-    return out
+    left_eye_center = shape[list(LEFT_EYE)].mean(axis=0)
+    right_eye_center = shape[list(RIGHT_EYE)].mean(axis=0)
+    aspect_ratio = (
+        eye_aspect_ratio(shape, LEFT_EYE) + eye_aspect_ratio(shape, RIGHT_EYE)
+    ) / 2
+    angle = (
+        ear_angle(shape, LEFT_EAR, left_eye_center, right_eye_center)
+        + ear_angle(shape, RIGHT_EAR, left_eye_center, right_eye_center)
+    ) / 2
+    spread = muzzle_spread_ratio(shape, MUZZLE, left_eye_center, right_eye_center)
+    return np.array([aspect_ratio, angle, spread])
+
+
+def ratio_features(raw_shapes: np.ndarray) -> np.ndarray:
+    """(N, 3): see `ratio_features_one`, applied per row."""
+    return np.stack([ratio_features_one(shape) for shape in raw_shapes])
+
+
+def coord_features_one(shape: np.ndarray, mean_shape: np.ndarray) -> np.ndarray:
+    """(96,): Procrustes-align a single raw (48,2) shape to an already-fitted
+    `mean_shape` (single-shape Kabsch align, distinct from `coord_features`'s
+    batch `generalized_procrustes` fit), then flatten. For single-image
+    inference, where `mean_shape` is the training-time GPA reference."""
+    return procrustes_align(shape, mean_shape).reshape(-1)
 
 
 def coord_features(raw_shapes: np.ndarray) -> np.ndarray:
