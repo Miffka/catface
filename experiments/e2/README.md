@@ -62,19 +62,19 @@ Plot: `plots/coords_lr_confusion_matrix.png`.
 | fold | macro F1 | kappa | MCC |
 |---|---|---|---|
 | 0 | 0.427 | 0.155 | 0.161 |
-| 1 | 0.443 | 0.211 | 0.219 |
-| 2 | 0.421 | 0.157 | 0.167 |
-| 3 | 0.423 | 0.179 | 0.184 |
-| 4 | 0.376 | 0.073 | 0.076 |
-| **mean** | **0.418 +/- 0.023** | **0.155 +/- 0.046** | **0.161 +/- 0.047** |
+| 1 | 0.401 | 0.136 | 0.143 |
+| 2 | 0.431 | 0.181 | 0.190 |
+| 3 | 0.335 | 0.018 | 0.018 |
+| 4 | 0.375 | 0.060 | 0.063 |
+| **mean** | **0.394 +/- 0.036** | **0.110 +/- 0.061** | **0.115 +/- 0.064** |
 
 Confusion matrix (rows = true, columns = predicted, summed over 5 folds):
 
 | true \ pred | attentive | relaxed | uncomfortable |
 |---|---|---|---|
-| attentive | 742 | 218 | 170 |
-| relaxed | 363 | 203 | 164 |
-| uncomfortable | 23 | 20 | 64 |
+| attentive | 714 | 234 | 182 |
+| relaxed | 387 | 175 | 168 |
+| uncomfortable | 27 | 16 | 64 |
 
 Plot: `plots/mlp_confusion_matrix.png`.
 
@@ -88,6 +88,15 @@ Plot: `plots/mlp_confusion_matrix.png`.
 | MCC | 0.018 +/- 0.001 |
 
 Plot: `plots/random_baseline_confusion_matrix.png`.
+
+## Checkpoints & ONNX export
+Each model above is also fit once more on the full, oversample-balanced dataset and checkpointed:
+
+| model | checkpoint | onnx export |
+|---|---|---|
+| `ratios_lr` | `experiments/e2/ratios_lr/checkpoint.pkl` | n/a |
+| `coords_lr` | `experiments/e2/coords_lr/checkpoint.pkl` | n/a |
+| `mlp` | `experiments/e2/mlp/checkpoint.pt` | PASS |
 
 ## Citations
 - CatFLW (landmark scheme, Finka et al.) and the Finka landmark scheme: see `docs/MODEL_REPORT.md` Citations.

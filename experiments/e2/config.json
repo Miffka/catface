@@ -6,5 +6,19 @@
     "relaxed",
     "uncomfortable"
   ],
-  "git_sha": "6c01ac7c5401760539f85c91621f3f045e3dd92b"
+  "git_sha": "acb8fe9d28cdf21c984f554bebdd851adc92ae06",
+  "checkpoints": {
+    "ratios_lr": {
+      "checkpoint_path": "experiments/e2/ratios_lr/checkpoint.pkl",
+      "onnx_success": null
+    },
+    "coords_lr": {
+      "checkpoint_path": "experiments/e2/coords_lr/checkpoint.pkl",
+      "onnx_success": null
+    },
+    "mlp": {
+      "checkpoint_path": "experiments/e2/mlp/checkpoint.pt",
+      "onnx_success": true
+    }
+  }
 }
