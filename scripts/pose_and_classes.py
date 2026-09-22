@@ -39,6 +39,10 @@ CHECKPOINTS = {
     "gnn_identity": ROOT / "experiments" / "e3" / "gnn_identity" / "checkpoint.pt",
 }
 ARM_COLORS = {"coords_lr": "tab:orange", "gnn_identity": "tab:purple"}
+# Second-grooming-pass prior-shift tolerance (docs/backlog.md RSCH-4):
+# exceeding it means a bin's class mix has drifted enough from the pooled
+# prior that its kappa can't be read as pose degradation alone.
+TV_TOLERANCE = 0.05
 
 
 def git_sha() -> str:
@@ -66,7 +70,9 @@ def predict_arm(name: str, features: Features) -> np.ndarray:
     return model.predict(X)
 
 
-def bin_metrics(y: np.ndarray, pred: np.ndarray, bin_index: np.ndarray, labels: list[int], n_bins: int) -> list[dict]:
+def bin_metrics(
+    y: np.ndarray, pred: np.ndarray, bin_index: np.ndarray, labels: list[int], n_bins: int, pooled_counts: np.ndarray
+) -> list[dict]:
     rows = []
     for b in range(n_bins):
         mask = bin_index == b
@@ -82,6 +88,12 @@ def bin_metrics(y: np.ndarray, pred: np.ndarray, bin_index: np.ndarray, labels: 
                 "macro_f1": float(f1_score(y_b, pred_b, average="macro", labels=labels)),
                 "accuracy": float(accuracy_score(y_b, pred_b)),
                 "majority_rate": float(counts.max() / counts.sum()),
+                # Control (a): guards against a bin's class mix drifting from
+                # the pooled prior and showing up as "pose degradation" that
+                # is really prior shift. Same for every arm (it only depends
+                # on y and the bin, not on pred), computed once per arm for
+                # simplicity.
+                "tv_distance": scoring.total_variation(counts, pooled_counts),
             }
         )
     return rows
@@ -111,18 +123,45 @@ def plot_kappa_per_bin(per_arm_bins: dict[str, list[dict]], out_path: Path) -> N
 
 def per_bin_table(rows: list[dict], classes: list[str]) -> list[str]:
     header = (
-        "| bin | n | kappa (95% CI) | macro F1 | accuracy | majority rate | "
+        "| bin | n | kappa (95% CI) | macro F1 | accuracy | majority rate | TV vs pooled prior | "
         + " | ".join(f"n {c}" for c in classes)
         + " |"
     )
-    out = [header, "|---|---|---|---|---|---|" + "|".join(["---"] * len(classes)) + "|"]
+    out = [header, "|---|---|---|---|---|---|---|" + "|".join(["---"] * len(classes)) + "|"]
     for b in rows:
+        flag = " (over 0.05 tolerance)" if b["tv_distance"] > TV_TOLERANCE else ""
         out.append(
             f"| {b['index']} | {b['n']} | {b['kappa']:.3f} ({b['kappa_ci'][0]:.3f} to "
             f"{b['kappa_ci'][1]:.3f}) | {b['macro_f1']:.3f} | {b['accuracy']:.3f} | "
-            f"{b['majority_rate']:.3f} | " + " | ".join(str(c) for c in b["class_counts"]) + " |"
+            f"{b['majority_rate']:.3f} | {b['tv_distance']:.3f}{flag} | "
+            + " | ".join(str(c) for c in b["class_counts"])
+            + " |"
         )
     return out + [""]
+
+
+def majority_rate_sentence(arm: str, rows: list[dict]) -> str:
+    """Names each bin's majority-class rate in prose, as the chance floor
+    that bin's kappa is being read against (kappa is chance-corrected, but
+    the floor it corrects against is otherwise left as a table column no
+    one is pointed at)."""
+    parts = ", ".join(f"bin {b['index']} {b['majority_rate']:.3f}" for b in rows)
+    return f"`{arm}`'s kappa in each bin is read against that bin's own majority-class rate as the chance floor: {parts}."
+
+
+def tv_distance_sentence(rows: list[dict]) -> str:
+    over = [b["index"] for b in rows if b["tv_distance"] > TV_TOLERANCE]
+    if over:
+        detail = ", ".join(f"bin {b} ({rows[b]['tv_distance']:.3f})" for b in over)
+        return (
+            f"Per-bin total-variation distance from the pooled class prior exceeds the "
+            f"pre-registered {TV_TOLERANCE:.2f} tolerance in {detail}: that bin's class mix has "
+            "drifted from the pooled prior enough that its kappa cannot be read as pose effect alone."
+        )
+    return (
+        f"Per-bin total-variation distance from the pooled class prior stays within the "
+        f"pre-registered {TV_TOLERANCE:.2f} tolerance in every bin."
+    )
 
 
 def write_readme(config: dict, all_metrics: dict, classes: list[str]) -> None:
@@ -137,6 +176,13 @@ def write_readme(config: dict, all_metrics: dict, classes: list[str]) -> None:
          "below are for the Research PM to read directly. Produced by "
          "`uv run python scripts/pose_and_classes.py`."),
         "",
+        ("**This is an in-sample check and its evidence is one-sided.** Both checkpoints "
+         "were fit on the exact rows they are scored on here, so a flat-or-rising per-bin "
+         "trend below does not establish that the model holds up on unseen high-yaw "
+         "photos -- it only shows the checkpoints are not visibly underfitting their own "
+         "high-yaw training rows. A falling trend would have been informative; this one "
+         "is not proof of generalization."),
+        "",
         f"Rows: {config['n_rows']}. Splits: `{config['splits_path']}`, sha256 `{config['splits_sha256']}`.",
         (f"Pose estimator: `core.geometry.yaw_foreshortening_ratio`. `r_frontal` (the "
          f"{config['frontal_percentile']:.0f}th percentile of the observed ratio): "
@@ -144,12 +190,18 @@ def write_readme(config: dict, all_metrics: dict, classes: list[str]) -> None:
          "clamped to theta = 0."),
         "",
         "## Bins",
-        "Four equal-count quantile bins on theta, bin 0 most frontal.",
+        ("Four equal-count quantile bins on theta (arccos of the ratio), bin 0 most "
+         "frontal. Reported here in raw `w_obs / v_obs` ratio units rather than degrees: "
+         "this project's own internal control (`docs/backlog.md` RSCH-4, 2026-09-20 "
+         "comment) found the yaw label unearned for this estimator -- Spearman rho 0.106 "
+         "(CI 0.062 to 0.149) against a pre-registered 0.3 threshold -- so no degree "
+         "figure is attached to it here. Ratio falls as yaw rises, so bin 0's range sits "
+         "highest."),
         "",
-        "| bin | theta range (deg) |",
+        "| bin | w_obs / v_obs range |",
         "|---|---|",
         *[
-            f"| {b} | {config['theta_edges'][b]:.1f} to {config['theta_edges'][b + 1]:.1f} |"
+            f"| {b} | {config['ratio_bin_ranges'][b][0]:.4f} to {config['ratio_bin_ranges'][b][1]:.4f} |"
             for b in range(pose.N_BINS)
         ],
         "",
@@ -175,8 +227,25 @@ def write_readme(config: dict, all_metrics: dict, classes: list[str]) -> None:
         ]
         lines += ["", "Per bin:", ""]
         lines += per_bin_table(all_metrics[name]["per_bin"], classes)
+        lines += [majority_rate_sentence(name, all_metrics[name]["per_bin"]), ""]
 
-    lines += ["Plot: `plots/kappa_per_bin.png`.", ""]
+    lines += [
+        tv_distance_sentence(all_metrics[next(iter(CHECKPOINTS))]["per_bin"]),
+        "",
+        "## Limitations",
+        "",
+        ("- **Facial-width confound.** `theta`/the ratio comes from dividing a bilateral "
+         "span by a vertical one (family 1, foreshortening); a genuinely narrow- or "
+         "wide-faced cat reads as more or less yawed at zero rotation. Breed and identity "
+         "aren't labelled in cat-emotions-3 and there's one photo per cat, so a per-row "
+         "correction isn't estimable at this sample size."),
+        ("- **Pitch is not modelled.** The estimator only accounts for rotation about the "
+         "vertical (yaw) axis; any pitch present in a photo is absorbed into the ratio "
+         "uncalibrated, not removed."),
+        "",
+        "Plot: `plots/kappa_per_bin.png`.",
+        "",
+    ]
     (RUN_DIR / "README.md").write_text("\n".join(lines) + "\n")
 
 
@@ -204,6 +273,11 @@ def main(argv: list[str]) -> None:
     print(f"r_frontal: {r_frontal:.4f}, out-of-domain rows: {int(out_of_domain.sum())}")
     print(f"bin edges (deg): {[round(float(e), 1) for e in theta_edges]}")
 
+    pooled_counts = np.bincount(y, minlength=len(labels))
+    ratio_bin_ranges = [
+        (float(ratios[bin_index == b].min()), float(ratios[bin_index == b].max())) for b in range(pose.N_BINS)
+    ]
+
     config = {
         "n_rows": len(y),
         "classes": classes,
@@ -214,6 +288,8 @@ def main(argv: list[str]) -> None:
         "r_frontal": r_frontal,
         "out_of_domain_rows": int(out_of_domain.sum()),
         "theta_edges": [float(e) for e in theta_edges],
+        "ratio_bin_ranges": ratio_bin_ranges,
+        "pooled_class_counts": pooled_counts.tolist(),
         "checkpoints": {name: str(path.relative_to(ROOT)) for name, path in CHECKPOINTS.items()},
         "evaluation": "in_sample_full_dataset_checkpoint",
     }
@@ -231,7 +307,7 @@ def main(argv: list[str]) -> None:
             "macro_f1": float(f1_score(y, pred, average="macro", labels=labels)),
             "accuracy": float(accuracy_score(y, pred)),
             "pooled_confusion_matrix": confusion_matrix(y, pred, labels=labels).tolist(),
-            "per_bin": bin_metrics(y, pred, bin_index, labels, pose.N_BINS),
+            "per_bin": bin_metrics(y, pred, bin_index, labels, pose.N_BINS, pooled_counts),
         }
         all_metrics[name] = metrics
         out_dir = RUN_DIR / name

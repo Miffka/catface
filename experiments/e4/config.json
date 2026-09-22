@@ -5,7 +5,7 @@
     "relaxed",
     "uncomfortable"
   ],
-  "git_sha": "e3bb8cda5f29add937f022e05220cfd4d629b3a1",
+  "git_sha": "508fcac3a80fae47478a5ed114dc4388fc9d6500",
   "splits_path": "data/cache/splits.csv",
   "splits_sha256": "488c674e6cde9a239b481a5f52091b2372cf1196d2106b6fee86851ecbecee47",
   "frontal_percentile": 95.0,
@@ -17,6 +17,29 @@
     35.30715527168133,
     39.1556423032326,
     61.50567758844891
+  ],
+  "ratio_bin_ranges": [
+    [
+      1.417699403205265,
+      2.470787980935493
+    ],
+    [
+      1.332759214160501,
+      1.4171921903038311
+    ],
+    [
+      1.2663157561267429,
+      1.3326332109079169
+    ],
+    [
+      0.7790570968856279,
+      1.2662471926933392
+    ]
+  ],
+  "pooled_class_counts": [
+    1130,
+    730,
+    107
   ],
   "checkpoints": {
     "coords_lr": "experiments/e2/coords_lr/checkpoint.pkl",

@@ -51,3 +51,12 @@ def kappa_ci(y_true: np.ndarray, y_pred: np.ndarray, labels: Sequence[int], **kw
         return cohen_kappa_score(y_true[idx], y_pred[idx], labels=list(labels))
 
     return bootstrap_ci(statistic, len(y_true), **kwargs)
+
+
+def total_variation(counts: Sequence[int], pooled_counts: Sequence[int]) -> float:
+    """Total variation distance, 0.5 * sum(|p_i - q_i|), between a bin's raw
+    class counts and the pooled prior's raw class counts. Guards against
+    reading a bin's own class-mix shift as pose degradation."""
+    p = np.asarray(counts, dtype=float)
+    q = np.asarray(pooled_counts, dtype=float)
+    return float(0.5 * np.abs(p / p.sum() - q / q.sum()).sum())
