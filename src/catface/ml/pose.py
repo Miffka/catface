@@ -36,14 +36,6 @@ import numpy as np
 FRONTAL_PERCENTILE = 95.0
 FRONTAL_PERCENTILE_SWEEP = (90.0, 95.0, 99.0)
 N_BINS = 4
-FALLBACK_N_BINS = 3
-# Internal control: Spearman rho between |s| (family 2) and tan(theta)
-# (family 1). At or above RHO_YAW the two estimators agree well enough to
-# call the binning quantity yaw; below RHO_WITHDRAW the yaw label is not
-# earned and the verdict is reported against the foreshortening ratio under
-# its operational name, with no degree figure attached.
-RHO_YAW = 0.5
-RHO_WITHDRAW = 0.3
 # d_rel = s / tan(theta) explodes as theta -> 0, so the per-row depth
 # distribution is taken over rows above this angle only.
 D_REL_MIN_DEGREES = 5.0

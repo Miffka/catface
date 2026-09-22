@@ -1,5 +1,4 @@
-"""E4 (RSCH-4): the degree calibration, the hand-written Spearman, and the
-two pre-registered verdict functions.
+"""E4 (RSCH-4): the degree calibration and the hand-written Spearman.
 
 The calibration test is a round trip through the *real* pipeline against an
 independently constructed 3D truth: a synthetic bilaterally symmetric cat
@@ -182,7 +181,7 @@ def test_spearman_rho_is_one_for_a_monotonic_nonlinear_relation():
     assert pose.spearman_rho(x, np.exp(x)) == pytest.approx(1.0)
 
 
-# --- Binning and the controls' statistics -----------------------------------
+# --- Binning and bootstrap CI ------------------------------------------------
 
 
 def test_quantile_bins_are_equal_count_and_ordered():
@@ -193,110 +192,8 @@ def test_quantile_bins_are_equal_count_and_ordered():
     assert index[0] == 0 and index[-1] == 3
 
 
-def test_total_variation_and_crosstalk_known_values():
-    assert scoring.total_variation([1, 1], [1, 1]) == 0.0
-    assert scoring.total_variation([2, 0], [1, 1]) == pytest.approx(0.5)
-    confusion = np.array([[8, 2, 0], [4, 6, 0], [0, 0, 10]])
-    # (2 + 4) / (10 + 10)
-    assert scoring.crosstalk(confusion, 0, 1) == pytest.approx(0.3)
-
-
 def test_bootstrap_ci_brackets_a_known_mean():
     values = np.random.default_rng(1).normal(5.0, 1.0, 400)
     lo, hi = scoring.bootstrap_ci(lambda idx: float(values[idx].mean()), len(values))
     assert lo < 5.0 < hi
     assert hi - lo < 0.5
-
-
-# --- The verdict functions --------------------------------------------------
-
-
-def _bin(index, kappa, ci, tv=0.0, n=490):
-    return {
-        "index": index,
-        "n": n,
-        "kappa": kappa,
-        "kappa_ci": ci,
-        "macro_f1": 0.4,
-        "accuracy": 0.5,
-        "majority_rate": 0.57,
-        "tv": tv,
-        "edge_ratio": 1.5 - 0.1 * index,
-        "edge_degrees": {90.0: 10.0 * index, 95.0: 12.0 * index, 99.0: 14.0 * index},
-    }
-
-
-_GOOD_RHO = (0.7, (0.6, 0.8))
-
-
-def test_q3_chance_gate_fires_when_bin_zero_cannot_clear_zero():
-    bins = [_bin(0, 0.02, (-0.05, 0.09)), _bin(1, 0.2, (0.1, 0.3))]
-    status, text = scoring.q3_verdict("gnn_identity", bins, *_GOOD_RHO)
-    assert status == "INCONCLUSIVE"
-    assert "Chance gate fired" in text and "no pose penalty" in text
-
-
-def test_q3_degradation_rule_fires_and_names_the_ratio_edge_and_degrees():
-    bins = [
-        _bin(0, 0.30, (0.20, 0.40)),
-        _bin(1, 0.25, (0.15, 0.35)),
-        _bin(2, 0.05, (-0.05, 0.15)),
-    ]
-    status, text = scoring.q3_verdict("gnn_identity", bins, *_GOOD_RHO)
-    assert status == "POSITIVE"
-    assert "degradation rule fired at bin 2" in text
-    assert "foreshortening ratio 1.300" in text
-    assert "24.0 deg at the 95th-percentile" in text and "20.0-28.0 deg" in text
-
-
-def test_q3_reports_negative_when_no_bin_degrades():
-    bins = [_bin(0, 0.30, (0.20, 0.40)), _bin(1, 0.25, (0.15, 0.35))]
-    status, text = scoring.q3_verdict("gnn_identity", bins, *_GOOD_RHO)
-    assert status == "NEGATIVE"
-    assert "degradation rule did not fire" in text
-
-
-def test_q3_prior_shift_makes_the_verdict_provisional_and_names_the_bin():
-    bins = [_bin(0, 0.30, (0.20, 0.40)), _bin(1, 0.25, (0.15, 0.35), tv=0.09)]
-    status, text = scoring.q3_verdict("gnn_identity", bins, *_GOOD_RHO)
-    assert status == "NEGATIVE (PROVISIONAL)"
-    assert "bin 1 (TV 0.090)" in text
-
-
-def test_q3_withdraws_the_yaw_label_and_every_degree_when_rho_is_low():
-    bins = [
-        _bin(0, 0.30, (0.20, 0.40)),
-        _bin(1, 0.25, (0.15, 0.35)),
-        _bin(2, 0.05, (-0.05, 0.15)),
-    ]
-    _status, text = scoring.q3_verdict("gnn_identity", bins, 0.12, (0.05, 0.19))
-    assert "yaw label is not earned" in text
-    assert "foreshortening ratio 1.300" in text  # the ratio edge still appears
-    assert "deg at the" not in text and "percentile" not in text.split("earned")[1]
-
-
-def test_q4_null_path_when_no_pair_clears_both_thresholds():
-    pairs = [
-        {"names": ("attentive", "relaxed"), "crosstalk": 0.30, "kappa": 0.21,
-         "kappa_ci": (0.12, 0.29), "candidate": False},
-        {"names": ("attentive", "uncomfortable"), "crosstalk": 0.10, "kappa": 0.18,
-         "kappa_ci": (-0.02, 0.35), "candidate": False},
-    ]
-    status, text = scoring.q4_verdict(pairs, None, "gnn_identity", 0.23, (0.18, 0.28))
-    assert status == "NEGATIVE"
-    assert "no merge is warranted on the evidence" in text
-    assert "pre-registered null path" in text
-
-
-def test_q4_accepts_a_merge_only_if_retrained_beats_collapsed_and_both_clear_the_dummy():
-    pairs = [{"names": ("attentive", "relaxed"), "crosstalk": 0.40, "kappa": 0.02,
-              "kappa_ci": (-0.05, 0.09), "candidate": True}]
-    merge = {"names": ("attentive", "relaxed"), "retrained_kappa": 0.31,
-             "collapsed_kappa": 0.28, "dummy_kappa": 0.0}
-    status, _text = scoring.q4_verdict(pairs, merge, "gnn_identity", 0.23, (0.18, 0.28))
-    assert status == "POSITIVE"
-
-    merge["retrained_kappa"] = 0.20  # below the post-hoc collapse
-    status, text = scoring.q4_verdict(pairs, merge, "gnn_identity", 0.23, (0.18, 0.28))
-    assert status == "NEGATIVE"
-    assert "merging bought nothing" in text

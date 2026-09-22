@@ -1,11 +1,12 @@
-"""E4: head pose and class structure.
+"""E4: pose-binned check of the two best E2/E3 arms by pooled kappa.
 
-Everything decidable was decided before this script ran: the bin count, the
-verdict metric, the percentile that fixes `r_frontal`, the bootstrap, the
-decision rules and both verdict functions are committed in
-`src/catface/ml/pose.py` and `src/catface/ml/scoring.py`, per the Research
-PM's two grooming passes in `docs/backlog.md`. This file measures; it does
-not choose.
+Loads the already-trained `coords_lr` and `gnn_identity` checkpoints
+(full-dataset fits from `experiments/e2/coords_lr/checkpoint.pkl` and
+`experiments/e3/gnn_identity/checkpoint.pt`) instead of retraining, predicts
+over the whole dataset, and reports kappa/macro-F1/accuracy inside four
+pose bins. This is an in-sample check (the checkpoints were fit on these
+same rows), not a re-run of the pre-registered out-of-fold RSCH-4 numbers
+in `docs/backlog.md` -- no verdict is computed here, just the numbers.
 
 Usage: uv run python scripts/pose_and_classes.py
 """
@@ -19,83 +20,25 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-import shape_space
-import torch
-from sklearn.decomposition import PCA
-from sklearn.metrics import (
-    accuracy_score,
-    cohen_kappa_score,
-    confusion_matrix,
-    f1_score,
-)
+from sklearn.metrics import accuracy_score, cohen_kappa_score, confusion_matrix, f1_score
 
-from catface.core.geometry import (
-    CHIN,
-    OCULAR_PAIR,
-    PHILTRUM,
-    expand_box,
-    yaw_centroid_proxy,
-    yaw_foreshortening_ratio,
-    yaw_midline_offset,
-)
-from catface.ml import (
-    coords_lr,
-    cv,
-    gnn,
-    mlp,
-    pose,
-    random_baseline,
-    ratios_lr,
-    scoring,
-)
-from catface.ml.features import load_features, load_raw_shapes
-from catface.ml.splits import SPLITS_PATH, USABLE_CLASSES, load_splits_cache
+from catface.core.geometry import yaw_foreshortening_ratio
+from catface.ml import coords_lr, gnn, pose, scoring
+from catface.ml.features import Features, load_features
+from catface.ml.splits import SPLITS_PATH
 
 ROOT = Path(__file__).resolve().parent.parent
 RUN_DIR = ROOT / "experiments" / "e4"
 PLOTS_DIR = RUN_DIR / "plots"
-E2_DIR = ROOT / "experiments" / "e2"
-E3_DIR = ROOT / "experiments" / "e3"
-SEED = 0
-N_SPLITS = 5
 N_NODES = 48
 
-MODEL_ARMS = ("ratios_lr", "coords_lr", "mlp", "gnn_identity")
-CONTROL_ARMS = ("yaw_only_lr", "random_baseline")
-ALL_ARMS = MODEL_ARMS + CONTROL_ARMS
-# Which committed run each arm's per-fold metrics are checked against
-# (control (d)). `yaw_only_lr` is new at E4 and has no source.
-REPRODUCTION_SOURCE = {
-    "ratios_lr": E2_DIR / "ratios_lr" / "metrics.json",
-    "coords_lr": E2_DIR / "coords_lr" / "metrics.json",
-    "mlp": E2_DIR / "mlp" / "metrics.json",
-    "gnn_identity": E3_DIR / "gnn_identity" / "metrics.json",
-    "random_baseline": E2_DIR / "random_baseline" / "metrics.json",
+CHECKPOINTS = {
+    "coords_lr": ROOT / "experiments" / "e2" / "coords_lr" / "checkpoint.pkl",
+    "gnn_identity": ROOT / "experiments" / "e3" / "gnn_identity" / "checkpoint.pt",
 }
-PER_FOLD_KEYS = ("per_fold_macro_f1", "per_fold_kappa", "per_fold_mcc")
-# Reported the way E2 and E3 report it: a flattened total for the coordinate
-# arms, a per-node channel count for the GNN, None for the dummy.
-N_FEATURES = {
-    "ratios_lr": 3,
-    "coords_lr": 96,
-    "mlp": 96,
-    "gnn_identity": 4,
-    "yaw_only_lr": 1,
-    "random_baseline": None,
-}
-
-ARM_COLORS = {
-    "ratios_lr": "tab:blue",
-    "coords_lr": "tab:orange",
-    "mlp": "tab:green",
-    "gnn_identity": "tab:purple",
-    "yaw_only_lr": "tab:red",
-    "random_baseline": "tab:brown",
-}
+ARM_COLORS = {"coords_lr": "tab:orange", "gnn_identity": "tab:purple"}
 
 
 def git_sha() -> str:
@@ -106,150 +49,29 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-# --- pose measurement -------------------------------------------------------
+def predict_arm(name: str, features: Features) -> np.ndarray:
+    """Load `name`'s full-dataset checkpoint and predict over the whole
+    dataset. Checked against `features.classes` because a class-order
+    mismatch between the checkpoint and this run's LabelEncoder would
+    silently mislabel every prediction."""
+    path = CHECKPOINTS[name]
+    if name == "coords_lr":
+        model, _mean_shape, classes = coords_lr.load_checkpoint(path)
+        X = features.coord_X
+    else:
+        model, _mean_shape, classes = gnn.load_checkpoint(path)
+        X = features.node_X
+    if classes != features.classes:
+        raise ValueError(f"{name} checkpoint classes {classes} != run classes {features.classes}")
+    return model.predict(X)
 
 
-def measure_pose(aligned: np.ndarray) -> dict:
-    """Both yaw estimators plus the legacy centroid proxy, over the whole
-    GPA-aligned stack. `r_frontal` and the degrees that follow from it are
-    computed at the pre-registered 95th percentile and swept at 90 and 99."""
-    ratios = yaw_foreshortening_ratio(aligned)
-    r_frontal = {p: pose.frontal_ratio(ratios, p) for p in pose.FRONTAL_PERCENTILE_SWEEP}
-    degrees, out_of_domain = pose.yaw_degrees(ratios, r_frontal[pose.FRONTAL_PERCENTILE])
-    offsets = yaw_midline_offset(aligned, midline_index=PHILTRUM)
-    chin_offsets = yaw_midline_offset(aligned, midline_index=CHIN)
-    return {
-        "ratio": ratios,
-        "r_frontal": r_frontal,
-        "theta": degrees,
-        "out_of_domain": out_of_domain,
-        "s": offsets,
-        "s_chin": chin_offsets,
-        "d_rel": pose.relative_depth(np.abs(offsets), degrees),
-        "d_rel_chin": pose.relative_depth(np.abs(chin_offsets), degrees),
-        "centroid_proxy": yaw_centroid_proxy(aligned),
-    }
-
-
-def ratio_of_theta_edge(theta_edge: float, r_frontal: float) -> float:
-    """The inverse of `pose.yaw_degrees` at the primary percentile: a bin edge
-    in exact foreshortening-ratio units, which is what `core/states.py` would
-    consume and what carries no modelling assumption."""
-    return float(r_frontal * np.cos(np.radians(theta_edge)))
-
-
-def degrees_of_ratio_edge(ratio_edge: float, r_frontal: dict[float, float]) -> dict[float, float]:
-    """One ratio edge, in degrees under each percentile setting. Bin edges are
-    quantiles of theta at the primary percentile; converting them back to the
-    ratio makes them percentile-free, which is what the app consumes, and the
-    degree figures then carry the percentile that produced them."""
-    return {
-        p: float(pose.yaw_degrees(np.array([ratio_edge]), r)[0][0]) for p, r in r_frontal.items()
-    }
-
-
-def occupancy(bin_index: np.ndarray, split: np.ndarray, minority: np.ndarray, n_bins: int) -> dict:
-    """Per-bin and per-(bin x fold) counts of the minority class, taken
-    immediately after the edges are frozen and before any arm is scored."""
-    per_bin = [int(minority[bin_index == b].sum()) for b in range(n_bins)]
-    per_cell = [
-        [int(minority[(bin_index == b) & (split == k)].sum()) for k in range(N_SPLITS)]
-        for b in range(n_bins)
-    ]
-    return {"per_bin": per_bin, "per_bin_fold": per_cell, "empty_cells": int(np.sum(np.array(per_cell) == 0))}
-
-
-def freeze_bins(theta: np.ndarray, split: np.ndarray, y: np.ndarray, uncomfortable: int) -> dict:
-    """Quantile bins on theta, with the pre-registered 3-bin fallback: if any
-    (bin x fold) cell holds zero `uncomfortable` rows at 4 bins, drop to 3.
-    Both occupancy tables are recorded either way."""
-    minority = y == uncomfortable
-    edges, index = scoring.quantile_bins(theta, pose.N_BINS)
-    four = occupancy(index, split, minority, pose.N_BINS)
-    fallback = four["empty_cells"] > 0
-    result = {"n_bins": pose.N_BINS, "occupancy_4_bins": four, "fallback_taken": fallback}
-    if fallback:
-        edges, index = scoring.quantile_bins(theta, pose.FALLBACK_N_BINS)
-        result["n_bins"] = pose.FALLBACK_N_BINS
-        result["occupancy_3_bins"] = occupancy(index, split, minority, pose.FALLBACK_N_BINS)
-    result["theta_edges"] = [float(e) for e in edges]
-    result["bin_index"] = index
-    return result
-
-
-# --- arms -------------------------------------------------------------------
-
-
-def build_arms(features, theta: np.ndarray) -> dict:
-    """(feature block, model factory) per arm. Each model module's own
-    `build_model` is called directly rather than its `run()`, because E4
-    needs `return_oof=True` and `run()` does not pass it."""
-    return {
-        "ratios_lr": (features.ratio_X, ratios_lr.build_model),
-        "coords_lr": (features.coord_X, coords_lr.build_model),
-        "mlp": (features.coord_X, mlp.build_model),
-        "gnn_identity": (features.node_X, gnn.build_model(np.eye(N_NODES), readout="flatten")),
-        # Control (c): logistic regression on the binning quantity alone, in
-        # the same configuration as the other two LR arms. Separates "pose
-        # degrades the model" from "pose predicts the label".
-        "yaw_only_lr": (theta[:, None], ratios_lr.build_model),
-        "random_baseline": (features.ratio_X, random_baseline.build_model),
-    }
-
-
-def run_arm(name: str, X: np.ndarray, build_model, y: np.ndarray, split: np.ndarray) -> dict:
-    if name == "mlp":
-        torch.manual_seed(SEED)  # exactly as mlp.run does, and in the same place
-    return cv.cross_validate(X, y, split, build_model, oversample=True, return_oof=True)
-
-
-def reproduction_check(name: str, metrics: dict) -> dict:
-    """Control (d): E2's and E3's metrics.json hold no per-row predictions, so
-    every arm is re-run here. The re-run's per-fold macro F1, kappa and MCC
-    are compared against the committed numbers. A hidden mismatch is the
-    defect; a recorded one is not."""
-    source = REPRODUCTION_SOURCE.get(name)
-    if source is None:
-        return {"source": None, "max_abs_delta": None, "exact": None}
-    committed = json.loads(source.read_text())
-    deltas = [
-        abs(a - b)
-        for key in PER_FOLD_KEYS
-        for a, b in zip(metrics[key], committed[key], strict=True)
-    ]
-    return {
-        "source": str(source.relative_to(ROOT)),
-        "max_abs_delta": float(max(deltas)),
-        "exact": max(deltas) == 0.0,
-    }
-
-
-# --- per-bin scoring --------------------------------------------------------
-
-
-def bin_metrics(
-    y: np.ndarray,
-    oof: np.ndarray,
-    split: np.ndarray,
-    bin_index: np.ndarray,
-    labels: list[int],
-    bins: dict,
-    r_frontal: dict[float, float],
-    ratio: np.ndarray,
-) -> list[dict]:
-    """Per bin: kappa with a bootstrap CI, macro F1, accuracy beside that
-    bin's own majority-class rate, n per class, and the five per-fold kappas
-    as the secondary sanity check."""
-    overall_counts = np.bincount(y, minlength=len(labels))
+def bin_metrics(y: np.ndarray, pred: np.ndarray, bin_index: np.ndarray, labels: list[int], n_bins: int) -> list[dict]:
     rows = []
-    for b in range(bins["n_bins"]):
+    for b in range(n_bins):
         mask = bin_index == b
-        y_b, pred_b = y[mask], oof[mask]
+        y_b, pred_b = y[mask], pred[mask]
         counts = np.bincount(y_b, minlength=len(labels))
-        # theta ascending, so bin b's frontal-side edge is its lower theta
-        # edge, which is its *upper* ratio edge.
-        theta_edge = bins["theta_edges"][b]
-        ratio_edge = ratio_of_theta_edge(theta_edge, r_frontal[pose.FRONTAL_PERCENTILE])
         rows.append(
             {
                 "index": b,
@@ -260,110 +82,14 @@ def bin_metrics(
                 "macro_f1": float(f1_score(y_b, pred_b, average="macro", labels=labels)),
                 "accuracy": float(accuracy_score(y_b, pred_b)),
                 "majority_rate": float(counts.max() / counts.sum()),
-                "tv": scoring.total_variation(counts, overall_counts),
-                "theta_range": [theta_edge, bins["theta_edges"][b + 1]],
-                "edge_ratio": ratio_edge,
-                "edge_degrees": degrees_of_ratio_edge(ratio_edge, r_frontal),
-                "per_fold_kappa": [
-                    float(cohen_kappa_score(y[mask & (split == k)], oof[mask & (split == k)], labels=labels))
-                    for k in range(N_SPLITS)
-                ],
             }
         )
     return rows
 
 
-def as_json(value):
-    """kappa_ci tuples and numpy scalars -> plain JSON. edge_degrees keys are
-    percentiles, which JSON turns into strings; that is fine to read back."""
-    if isinstance(value, dict):
-        return {str(k): as_json(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [as_json(v) for v in value]
-    if isinstance(value, (np.integer, np.floating, np.bool_)):
-        return value.item()
-    return value
-
-
-# --- Q4 ---------------------------------------------------------------------
-
-
-def pair_statistics(y: np.ndarray, oof: np.ndarray, cm: np.ndarray, classes: list[str]) -> list[dict]:
-    """All three pairs against the pre-registered merge thresholds: cross-talk
-    >= 0.25 **and** the pairwise 2x2 kappa CI contains 0, both required.
-
-    The 2x2 kappa is computed over the rows whose true *and* predicted labels
-    both fall in the pair, which is the sub-problem "told these two apart".
-    """
-    pairs = []
-    for i in range(len(classes)):
-        for j in range(i + 1, len(classes)):
-            mask = np.isin(y, [i, j]) & np.isin(oof, [i, j])
-            kappa = float(cohen_kappa_score(y[mask], oof[mask], labels=[i, j]))
-            ci = list(scoring.kappa_ci(y[mask], oof[mask], [i, j]))
-            talk = scoring.crosstalk(cm, i, j)
-            pairs.append(
-                {
-                    "classes": [i, j],
-                    "names": [classes[i], classes[j]],
-                    "n": int(mask.sum()),
-                    "crosstalk": talk,
-                    "kappa": kappa,
-                    "kappa_ci": ci,
-                    "candidate": talk >= scoring.CROSSTALK_THRESHOLD and scoring.contains_zero(ci),
-                }
-            )
-    return pairs
-
-
-def merged_labels(values: np.ndarray, pair: list[int], labels: list[int]) -> np.ndarray:
-    """Collapse `pair` onto its first member and relabel to 0..1. The mapping
-    is fixed by `labels`, not by which values happen to occur, so the true
-    labels and a set of predictions always merge the same way."""
-    surviving = [v for v in labels if v != pair[1]]
-    lookup = {v: i for i, v in enumerate(surviving)}
-    lookup[pair[1]] = lookup[pair[0]]
-    return np.array([lookup[v] for v in values])
-
-
-def run_merge(pair: dict, arm: str, X: np.ndarray, build_model, y: np.ndarray, oof: np.ndarray, split: np.ndarray) -> tuple[dict, dict]:
-    """The three 2-class quantities side by side: the retrained merged model,
-    the post-hoc collapse of the 3-class predictions, and a 2-class uniform
-    dummy under the merged prior. A 2-class kappa is not comparable to a
-    3-class one, so this is the only valid comparison."""
-    labels = sorted(set(y.tolist()))
-    y_merged = merged_labels(y, pair["classes"], labels)
-    collapsed = merged_labels(oof, pair["classes"], labels)
-    merged_label_set = sorted(set(y_merged.tolist()))
-
-    retrained = run_arm(arm, X, build_model, y_merged, split)
-    predicted = np.array(retrained["oof_pred"])
-    if not set(predicted.tolist()) <= set(merged_label_set):
-        # mlp/gnn keep a 3-unit head under merged labels; a prediction of the
-        # vanished third class would be silently dropped by the 2-class kappa.
-        raise ValueError(f"merged {arm} predicted classes outside {merged_label_set}")
-    dummy = cv.cross_validate(
-        X, y_merged, split, random_baseline.build_model, oversample=True, return_oof=True
-    )
-    merge = {
-        "names": pair["names"],
-        "classes": pair["classes"],
-        "candidate": pair["candidate"],
-        "retrained_kappa": float(cohen_kappa_score(y_merged, predicted, labels=merged_label_set)),
-        "collapsed_kappa": float(cohen_kappa_score(y_merged, collapsed, labels=merged_label_set)),
-        "dummy_kappa": float(
-            cohen_kappa_score(y_merged, np.array(dummy["oof_pred"]), labels=merged_label_set)
-        ),
-    }
-    return merge, retrained
-
-
-# --- plots ------------------------------------------------------------------
-
-
-def plot_per_bin_kappa(per_arm_bins: dict[str, list[dict]], out_path: Path) -> None:
+def plot_kappa_per_bin(per_arm_bins: dict[str, list[dict]], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(7, 5))
     n_bins = len(next(iter(per_arm_bins.values())))
     x = np.arange(n_bins)
     width = 0.8 / len(per_arm_bins)
@@ -375,647 +101,149 @@ def plot_per_bin_kappa(per_arm_bins: dict[str, list[dict]], out_path: Path) -> N
     ax.axhline(0, color="black", linewidth=0.8)
     ax.set_xticks(x + 0.4 - width / 2)
     ax.set_xticklabels([f"bin {b}" for b in range(n_bins)])
-    ax.set_ylabel("out-of-fold kappa (95% bootstrap CI)")
-    ax.set_title("E4: kappa per yaw bin, all arms (bin 0 = most frontal)")
-    ax.legend(fontsize=8)
+    ax.set_ylabel("in-sample kappa (95% bootstrap CI)")
+    ax.set_title("E4: kappa per yaw bin (bin 0 = most frontal), in-sample")
+    ax.legend()
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
 
 
-def plot_estimator_agreement(theta: np.ndarray, offsets: np.ndarray, rho: float, out_path: Path) -> None:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ax.scatter(np.tan(np.radians(theta)), np.abs(offsets), s=5, alpha=0.3)
-    ax.set_xlabel("tan(theta), family 1 (foreshortening)")
-    ax.set_ylabel("|s|, family 2 (midline offset)")
-    ax.set_title(f"E4 internal control: the two estimators against each other (Spearman rho = {rho:.3f})")
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-
-
-def plot_pose_distributions(measured: dict, bins: dict, out_path: Path) -> None:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
-    axes[0].hist(measured["theta"], bins=60, color="tab:blue")
-    for edge in bins["theta_edges"][1:-1]:
-        axes[0].axvline(edge, color="black", linestyle="--", linewidth=1)
-    axes[0].set_xlabel("theta (degrees, 95th-percentile r_frontal)")
-    axes[0].set_title("family 1, with the frozen bin edges")
-
-    axes[1].hist(measured["s"], bins=60, color="tab:red")
-    axes[1].axvline(0, color="black", linewidth=1)
-    axes[1].set_xlabel("s, signed midline offset")
-    axes[1].set_title("family 2, sign = turn direction")
-
-    finite = measured["d_rel"][np.isfinite(measured["d_rel"])]
-    axes[2].hist(finite, bins=60, range=(0, np.percentile(finite, 99)), color="tab:green")
-    axes[2].set_xlabel("d_rel = |s| / tan(theta)")
-    axes[2].set_title("measured philtrum depth, per row")
-    for ax in axes:
-        ax.set_ylabel("rows")
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-
-
-def plot_confusion_matrix(cm: np.ndarray, classes: list[str], title: str, out_path: Path) -> None:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(5, 5))
-    im = ax.imshow(cm, cmap="Blues")
-    ax.set_xticks(range(len(classes)))
-    ax.set_yticks(range(len(classes)))
-    ax.set_xticklabels(classes, rotation=45, ha="right")
-    ax.set_yticklabels(classes)
-    ax.set_xlabel("predicted")
-    ax.set_ylabel("true")
-    ax.set_title(title)
-    for i in range(len(classes)):
-        for j in range(len(classes)):
-            ax.text(j, i, int(cm[i, j]), ha="center", va="center")
-    fig.colorbar(im, ax=ax)
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-
-
-def write_yaw_extremes_montage(
-    raw_shapes: np.ndarray, image_paths: list[str], measured: dict, out_path: Path
-) -> list[dict]:
-    """The most-negative, near-zero and most-positive rows by family 2's
-    signed `s`, rendered from their source images. The sign-to-turn-direction
-    mapping is read off this montage rather than asserted from the maths: the
-    image y-axis points down and the GPA frame's global orientation is
-    arbitrary, so which way a positive `s` turns is a question about the
-    pictures."""
-    order = np.argsort(measured["s"])
-    middle = len(order) // 2
-    picks = {
-        "most negative s": order[:3],
-        "near zero s": order[middle - 1 : middle + 2],
-        "most positive s": order[-3:][::-1],
-    }
-
-    fig, axes = plt.subplots(3, 3, figsize=(13, 13))
-    for row, (title, indices) in enumerate(picks.items()):
-        for col, idx in enumerate(indices):
-            ax = axes[row, col]
-            image = cv2.imread(image_paths[idx])
-            points = raw_shapes[idx]
-            # Crop to the landmarks so the head is large enough to read a turn
-            # direction off; `expand_box` is core's, not a local copy.
-            x1, y1, x2, y2 = expand_box(
-                (points[:, 0].min(), points[:, 1].min(), points[:, 0].max(), points[:, 1].max()),
-                margin=0.6,
-                img_w=image.shape[1],
-                img_h=image.shape[0],
-            )
-            ax.imshow(cv2.cvtColor(image[y1:y2, x1:x2], cv2.COLOR_BGR2RGB))
-            points = points - (x1, y1)
-            ax.scatter(points[:, 0], points[:, 1], s=8, c="red")
-            for name, index in (("4", OCULAR_PAIR[0]), ("8", OCULAR_PAIR[1]), ("16", PHILTRUM), ("2", CHIN)):
-                ax.scatter(*points[index], s=40, c="yellow", edgecolors="black")
-                ax.annotate(name, points[index], color="yellow", fontsize=9, fontweight="bold")
-            ax.set_title(
-                f"{title}\ns = {measured['s'][idx]:+.4f}, ratio = {measured['ratio'][idx]:.3f}, "
-                f"theta = {measured['theta'][idx]:.1f} deg"
-                f"{' (out of domain)' if measured['out_of_domain'][idx] else ''}",
-                fontsize=9,
-            )
-            ax.axis("off")
-    fig.suptitle(
-        "E4: family 2's signed s at both extremes and at zero (points 4/8 eye corners, 16 "
-        f"philtrum, 2 chin). Every theta here is at the {pose.FRONTAL_PERCENTILE:.0f}th-percentile "
-        "`r_frontal`; see config.json for the 90th/99th sweep."
-    )
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=120)
-    plt.close(fig)
-
-    return [
-        {"group": title, "row": int(idx), "image_path": image_paths[idx],
-         "s": float(measured["s"][idx]), "theta": float(measured["theta"][idx])}
-        for title, indices in picks.items()
-        for idx in indices
-    ]
-
-
-# --- README -----------------------------------------------------------------
-
-REJECTED_FAMILIES = [
-    ("Family 3, mirror-Procrustes residual",
-     ("Swap all 21 bilateral pairs, align the relabelled shape to the original, read the "
-      "residual. Rejected at grooming: one non-negative scalar mixing yaw with expression "
-      "asymmetry, one ear forward and landmark error, with no way to decompose it, and unsigned "
-      "like family 1 without family 1's freedom from a depth prior.")),
-    ("Per-row least-squares fit of theta against all 21 pairs",
-     ("Family 1 generalised, and right if a 3D reference cat existed. None does: 21 frontal spans "
-      "each carry the same population-versus-individual width confound, so the extra precision "
-      "buys nothing against a shared systematic error that dominates it. The obvious upgrade if "
-      "a 3D model ever lands.")),
-    ("The E1 centroid proxy",
-     ("Kept as a named legacy column, not as a binning quantity. It goes as sin(2*theta), so it "
-      "turns over and one value has two candidate angles; the first grooming pass's saturation "
-      "machinery existed only to manage that. See below.")),
-]
-
-
-def per_fold_table(metrics: dict) -> list[str]:
-    per_fold = zip(metrics["per_fold_macro_f1"], metrics["per_fold_kappa"], metrics["per_fold_mcc"])
-    return [
-        "| fold | macro F1 | kappa | MCC |",
-        "|---|---|---|---|",
-        *[f"| {k} | {f1:.3f} | {kappa:.3f} | {mcc:.3f} |" for k, (f1, kappa, mcc) in enumerate(per_fold)],
-        (f"| **mean** | **{metrics['mean_macro_f1']:.3f} +/- {metrics['std_macro_f1']:.3f}** | "
-         f"**{metrics['mean_kappa']:.3f} +/- {metrics['std_kappa']:.3f}** | "
-         f"**{metrics['mean_mcc']:.3f} +/- {metrics['std_mcc']:.3f}** |"),
-        (f"| **pooled out-of-fold** | | **{metrics['pooled_kappa']:.3f}** (CI "
-         f"{metrics['pooled_kappa_ci'][0]:.3f} to {metrics['pooled_kappa_ci'][1]:.3f}) | |"),
-        "",
-    ]
-
-
-def per_bin_table(metrics: dict, classes: list[str]) -> list[str]:
-    rows = [
-        "| bin | n | kappa (95% CI) | macro F1 | accuracy | that bin's majority rate | "
+def per_bin_table(rows: list[dict], classes: list[str]) -> list[str]:
+    header = (
+        "| bin | n | kappa (95% CI) | macro F1 | accuracy | majority rate | "
         + " | ".join(f"n {c}" for c in classes)
-        + " | per-fold kappa |",
-        "|---|---|---|---|---|---|" + "|".join(["---"] * (len(classes) + 1)) + "|",
-    ]
-    for b in metrics["per_bin"]:
-        rows.append(
+        + " |"
+    )
+    out = [header, "|---|---|---|---|---|---|" + "|".join(["---"] * len(classes)) + "|"]
+    for b in rows:
+        out.append(
             f"| {b['index']} | {b['n']} | {b['kappa']:.3f} ({b['kappa_ci'][0]:.3f} to "
             f"{b['kappa_ci'][1]:.3f}) | {b['macro_f1']:.3f} | {b['accuracy']:.3f} | "
-            f"{b['majority_rate']:.3f} | " + " | ".join(str(c) for c in b["class_counts"]) + " | "
-            + ", ".join(f"{k:.2f}" for k in b["per_fold_kappa"]) + " |"
+            f"{b['majority_rate']:.3f} | " + " | ".join(str(c) for c in b["class_counts"]) + " |"
         )
-    return rows + [""]
+    return out + [""]
 
 
-def write_readme(
-    config: dict,
-    all_metrics: dict,
-    bins: dict,
-    measured: dict,
-    classes: list[str],
-    class_counts: dict,
-    verdict_arm: str,
-    merge: dict,
-) -> None:
-    ratio_edges = config["ratio_edges"]
-    theta_edges = bins["theta_edges"]
-    occupancy_4 = bins["occupancy_4_bins"]
-    d = config["d_rel"]
-
+def write_readme(config: dict, all_metrics: dict, classes: list[str]) -> None:
     lines = [
-        "# experiments/e4 — class structure and pose",
+        "# experiments/e4 — pose-binned check of coords_lr and gnn_identity",
         "",
-        "## What this is",
-        ("Six arms on the same 1967 cat-emotions-3 rows and the same frozen five folds E2 and E3 "
-         "used, each scored inside four bins of a pose estimator built from the landmark map. "
-         "Method, bin count, verdict metric, thresholds and decision rules are the Research PM's "
-         "two grooming passes in `docs/backlog.md`, all pre-registered; the constants and both "
-         "verdict functions were committed in `src/catface/ml/pose.py` and "
-         "`src/catface/ml/scoring.py` before this run produced a single metric. Produced by "
+        ("In-sample check of the two E2/E3 arms with the highest pooled out-of-fold kappa "
+         "(`gnn_identity`, `coords_lr`, per `docs/backlog.md` RSCH-4): their committed "
+         "full-dataset checkpoints are loaded and scored inside four pose bins. Not a "
+         "re-run of the pre-registered out-of-fold numbers -- these checkpoints were fit "
+         "on the same rows they're scored on here. No verdict is computed; the numbers "
+         "below are for the Research PM to read directly. Produced by "
          "`uv run python scripts/pose_and_classes.py`."),
         "",
-        "## Input",
-        f"Rows: {config['n_rows']}. Per-class counts:",
-        *[f"  {name}: {count}" for name, count in class_counts.items()],
-        (f"Splits: `{config['splits_path']}`, sha256 `{config['splits_sha256']}`, reused as-is "
-         "from E2 and E3, never regenerated."),
-        "",
-        "## The pose estimators",
-        ("The axis convention and the weak-perspective projection model are written out in "
-         "`src/catface/core/geometry.py`'s module docstring and are not repeated here. Both "
-         "estimators run on the same `generalized_procrustes` output E1 used, so in-plane roll "
-         "is already removed. Pitch is not modelled and not removed."),
-        "",
-        ("**Family 1, foreshortening (primary).** `w_obs / v_obs`, the outer-eye-corner span over "
-         "the chin-to-eye-corner-midpoint vertical, equals `r_frontal * |cos(theta)|`: the pair's "
-         "own depth cancels, so no depth prior enters anywhere. Unsigned, monotonic on "
-         "[0, 90] degrees, nothing saturates."),
-        ("**Family 2, midline offset (secondary, signed).** `s`, the philtrum's offset from the "
-         "eye-corner midpoint in units of the observed span, equals `d_rel * tan(theta)`. Signed "
-         "and monotonic over the full range."),
-        ("**The legacy centroid proxy.** E1's quantity, reported per row and correlated against "
-         "the new estimator, so E1's PC2 finding stays connected to this one. Not a binning "
-         "quantity and no edge is computed from it."),
-        "",
-        "Rejected estimator families, recorded so the choice is on the record:",
-        "",
-        *[f"- **{name}.** {why}" for name, why in REJECTED_FAMILIES],
-        "",
-        "## r_frontal and the out-of-domain rows",
-        ("Pre-registered: `r_frontal` is the 95th percentile of `w_obs / v_obs` over all "
-         f"{config['n_rows']} rows, pooled, computed once and frozen into `config.json` before "
-         "any arm was scored. Rows above it give `cos(theta) > 1`, clamp to theta = 0 and land in "
-         "bin 0; they are counted, never given an invented angle."),
-        "",
-        "| percentile | `r_frontal` | out-of-domain rows | share |",
-        "|---|---|---|---|",
-        *[
-            f"| {p}th | {config['r_frontal'][p]:.4f} | {config['out_of_domain_rows'][p]} | "
-            f"{config['out_of_domain_rows'][p] / config['n_rows']:.1%} |"
-            for p in ("90.0", "95.0", "99.0")
-        ],
+        f"Rows: {config['n_rows']}. Splits: `{config['splits_path']}`, sha256 `{config['splits_sha256']}`.",
+        (f"Pose estimator: `core.geometry.yaw_foreshortening_ratio`. `r_frontal` (the "
+         f"{config['frontal_percentile']:.0f}th percentile of the observed ratio): "
+         f"{config['r_frontal']:.4f}, {config['out_of_domain_rows']} out-of-domain rows "
+         "clamped to theta = 0."),
         "",
         "## Bins",
-        (f"Four equal-count quantile bins on the estimator, computed at run time over all "
-         f"{config['n_rows']} rows, pooled, and frozen into `config.json` before any arm was "
-         "scored. Bin 0 is the most frontal. The ratio edge is what an app-side consumer would "
-         "key on; it carries no modelling assumption at all."),
+        "Four equal-count quantile bins on theta, bin 0 most frontal.",
         "",
-        "| bin | ratio range (`w_obs / v_obs`) | theta range (95th pct) | rows | `uncomfortable` rows | per-fold `uncomfortable` |",
-        "|---|---|---|---|---|---|",
+        "| bin | theta range (deg) |",
+        "|---|---|",
         *[
-            f"| {b} | {ratio_edges[b + 1]:.3f} to {ratio_edges[b]:.3f} | {theta_edges[b]:.1f} to "
-            f"{theta_edges[b + 1]:.1f} deg | {all_metrics[verdict_arm]['per_bin'][b]['n']} | "
-            f"{occupancy_4['per_bin'][b]} | {occupancy_4['per_bin_fold'][b]} |"
-            for b in range(bins["n_bins"])
+            f"| {b} | {config['theta_edges'][b]:.1f} to {config['theta_edges'][b + 1]:.1f} |"
+            for b in range(pose.N_BINS)
         ],
         "",
-        (f"Pre-registered 3-bin fallback: **not taken**. The smallest (bin x fold) "
-         f"`uncomfortable` cell holds {min(min(row) for row in occupancy_4['per_bin_fold'])} rows, "
-         "none is empty, so the run stayed at four bins."
-         if not bins["fallback_taken"]
-         else "Pre-registered 3-bin fallback: **taken**, an empty (bin x fold) cell at four bins."),
+        "## Results",
         "",
-        "## Internal control: agreement between the two estimators",
-        (f"Spearman rho between |s| and tan(theta) over all {config['n_rows']} rows: "
-         f"**{config['internal_control']['spearman_rho']:.3f}**, 95% bootstrap CI "
-         f"{config['internal_control']['spearman_ci'][0]:.3f} to "
-         f"{config['internal_control']['spearman_ci'][1]:.3f} "
-         f"(B = {config['internal_control']['bootstrap_b']}, seed "
-         f"{config['internal_control']['bootstrap_seed']}). The pre-registered thresholds are "
-         f"{pose.RHO_YAW} to call the binning quantity yaw and {pose.RHO_WITHDRAW} to withdraw "
-         "the label."),
-        "",
-        "Plot: `plots/estimator_agreement.png`.",
-        "",
-        "## Measured depth term (d_rel)",
-        (f"`d_rel = |s| / tan(theta)` over the {d['n_rows_used']} rows above "
-         f"{d['min_degrees']:.0f} degrees (below that `tan(theta) -> 0` and the ratio is noise): "
-         f"philtrum median **{d['philtrum_median']:.4f}**, IQR {d['philtrum_iqr'][0]:.4f} to "
-         f"{d['philtrum_iqr'][1]:.4f}."),
-        "",
-        (f"Chin control (node 2): median {d['chin_median']:.4f}, IQR {d['chin_iqr'][0]:.4f} to "
-         f"{d['chin_iqr'][1]:.4f}, ratio to the philtrum median {d['chin_median'] / d['philtrum_median']:.2f}. "
-         "Synthetic round trip in `tests/test_pose.py`: recovers the built-in 0.30 to 1e-6, chin "
-         "below 1% of it."),
-        "",
-        "## The manual review montage",
-        ("`yaw_extremes_manual_review.png`: the most-negative, near-zero and most-positive rows "
-         "by family 2's signed `s`, cropped to the landmark box and rendered from the source "
-         "images with points 4, 8, 16 and 2 marked. `yaw_extremes_manual_review.json` names the "
-         "rows."),
-        "",
-        (f"Sign balance: {config['sign_split']['negative_s']} rows negative, "
-         f"{config['sign_split']['positive_s']} positive."),
-        "",
-        "## Legacy centroid proxy",
-        (f"E1's centroid proxy: |proxy| max {config['centroid_proxy_abs_max']:.4f} on these "
-         f"{config['n_rows']} rows. Correlation against this run's theta: r = "
-         f"{config['centroid_proxy_vs_theta_r']:.3f}."),
-        (f"E1's published r = 0.90 between PC2 and the proxy re-derives as "
-         f"{config['e1_best_pc_centroid_proxy_r']:.3f} on E1's own 2029-row plausible stack, now "
-         "that the proxy is imported from `core.geometry` rather than computed inline. "
-         "`experiments/e1` is byte-unchanged and E1 was not re-run."),
-        "",
-        "## Arms",
-        "",
-        "| arm | features | role |",
-        "|---|---|---|",
-        "| `ratios_lr` | 3 geometric ratios | E2 model arm |",
-        "| `coords_lr` | 96 aligned coordinates | E2 model arm |",
-        "| `mlp` | 96 aligned coordinates | E2 model arm |",
-        "| `gnn_identity` | 48x4 node features, `A_hat = I` | E3's winning arm |",
-        "| `yaw_only_lr` | the binning quantity alone | control (c) |",
-        "| `random_baseline` | none (uniform dummy) | control (b) |",
-        "",
-        ("All six on the frozen folds with `oversample=True` on training folds only, test folds "
-         "untouched, exactly as E2 and E3 ran them. Each arm is called through its own module's "
-         "`build_model`, not its `run()`, because E4 needs per-row out-of-fold predictions."),
-        "",
-        "## Results, pooled",
-        "",
-        "| arm | mean macro F1 | mean kappa | pooled out-of-fold kappa (95% CI) |",
-        "|---|---|---|---|",
+        "| arm | checkpoint | pooled kappa (95% CI) | pooled macro F1 | pooled accuracy |",
+        "|---|---|---|---|---|",
         *[
-            f"| `{name}` | {all_metrics[name]['mean_macro_f1']:.3f} +/- "
-            f"{all_metrics[name]['std_macro_f1']:.3f} | {all_metrics[name]['mean_kappa']:.3f} +/- "
-            f"{all_metrics[name]['std_kappa']:.3f} | {all_metrics[name]['pooled_kappa']:.3f} "
+            f"| `{name}` | `{config['checkpoints'][name]}` | {all_metrics[name]['pooled_kappa']:.3f} "
             f"({all_metrics[name]['pooled_kappa_ci'][0]:.3f} to "
-            f"{all_metrics[name]['pooled_kappa_ci'][1]:.3f}) |"
-            for name in ALL_ARMS
+            f"{all_metrics[name]['pooled_kappa_ci'][1]:.3f}) | {all_metrics[name]['macro_f1']:.3f} | "
+            f"{all_metrics[name]['accuracy']:.3f} |"
+            for name in CHECKPOINTS
         ],
-        "",
-        (f"Verdict arm by the pre-registered rule (highest pooled out-of-fold kappa among the "
-         f"four model arms): **`{verdict_arm}`**."),
-        "",
-        ("Control (c), `yaw_only_lr`: logistic regression on the binning quantity alone, same "
-         "configuration as the other two LR arms, same folds, same oversampling. Pooled kappa "
-         f"{all_metrics['yaw_only_lr']['pooled_kappa']:.3f} against the uniform dummy's "
-         f"{all_metrics['random_baseline']['pooled_kappa']:.3f}."),
         "",
     ]
-
-    for name in ALL_ARMS:
-        lines += [f"### {name}", ""]
-        lines += per_fold_table(all_metrics[name])
-        lines += ["Per bin (bin 0 = most frontal):", ""]
-        lines += per_bin_table(all_metrics[name], classes)
-
-    lines += [
-        "Plot: `plots/kappa_per_bin.png`, every arm's kappa in every bin with its bootstrap CI.",
-        "",
-        "## Control (a): per-bin class mix",
-        (f"Total-variation distance between each bin's class distribution and the overall prior; "
-         f"the pre-registered tolerance is {scoring.TV_TOLERANCE}."),
-        "",
-        "| bin | " + " | ".join(classes) + " | TV from the overall prior |",
-        "|---|" + "|".join(["---"] * (len(classes) + 1)) + "|",
-        *[
-            f"| {b['index']} | " + " | ".join(str(c) for c in b["class_counts"]) + f" | {b['tv']:.3f} |"
-            for b in all_metrics[verdict_arm]["per_bin"]
-        ],
-        "",
-        "## Control (b): the uniform dummy, inside each bin",
-        ("`DummyClassifier(strategy=\"uniform\", random_state=0)` on the identical folds, scored "
-         "within each bin under that bin's own label prior rather than once over the pooled rows "
-         "-- see the `random_baseline` per-bin table above."),
-        "",
-        "## Control (d): reproduction against the committed E2/E3 runs",
-        ("E2's and E3's `metrics.json` hold no per-row predictions, so every arm had to be re-run "
-         "to recover them. Per-fold macro F1, kappa and MCC compared against the committed files:"),
-        "",
-        "| arm | source | max abs delta | exact |",
-        "|---|---|---|---|",
-        *[
-            f"| `{name}` | "
-            + (f"`{config['reproduction_check'][name]['source']}`" if config["reproduction_check"][name]["source"] else "none (new at E4)")
-            + " | "
-            + (f"{config['reproduction_check'][name]['max_abs_delta']:.6f}" if config["reproduction_check"][name]["source"] else "-")
-            + " | "
-            + {True: "yes", False: "**no**", None: "-"}[config["reproduction_check"][name]["exact"]]
-            + " |"
-            for name in ALL_ARMS
-        ],
-        "",
-        "## Q4: class structure",
-        f"Pooled out-of-fold confusion matrix, `{verdict_arm}` (rows = true, columns = predicted):",
-        "",
-        "| true \\ pred | " + " | ".join(classes) + " |",
-        "|---|" + "|".join(["---"] * len(classes)) + "|",
-        *[
+    for name in CHECKPOINTS:
+        lines += [f"### {name}", "", "Pooled confusion matrix (rows = true, columns = predicted):", ""]
+        lines += ["| true \\ pred | " + " | ".join(classes) + " |", "|---|" + "|".join(["---"] * len(classes)) + "|"]
+        lines += [
             f"| {classes[i]} | " + " | ".join(str(v) for v in row) + " |"
-            for i, row in enumerate(all_metrics[verdict_arm]["pooled_confusion_matrix"])
-        ],
-        "",
-        "Plot: `plots/pooled_confusion_matrix.png`. Full pair detail: `merge.json`.",
-        "",
-        (f"Retrained vs. collapsed vs. uniform-dummy 2-class kappa, **{merge['names'][0]} / "
-         f"{merge['names'][1]}** (highest cross-talk pair, candidate for merge: "
-         f"{merge['candidate']}): retrained {merge['retrained_kappa']:.3f}, collapsed "
-         f"{merge['collapsed_kappa']:.3f}, dummy {merge['dummy_kappa']:.3f} "
-         f"(`merged/{verdict_arm}/metrics.json`)."),
-        "",
-        "## Files",
-        "- `config.json` — every frozen constant, the edges, the reproduction deltas, the git sha.",
-        "- `per_row.csv` — 1967 rows: both estimators, theta, the out-of-domain flag, the bin, the legacy proxy and one out-of-fold prediction column per arm. Every table above recomputes from it.",
-        "- `<arm>/metrics.json`, `merged/<arm>/metrics.json`, `merge.json`, `plots/`, `yaw_extremes_manual_review.png`.",
-        "",
-    ]
+            for i, row in enumerate(all_metrics[name]["pooled_confusion_matrix"])
+        ]
+        lines += ["", "Per bin:", ""]
+        lines += per_bin_table(all_metrics[name]["per_bin"], classes)
 
+    lines += ["Plot: `plots/kappa_per_bin.png`.", ""]
     (RUN_DIR / "README.md").write_text("\n".join(lines) + "\n")
 
 
-# --- main -------------------------------------------------------------------
-
-
-def e1_centroid_proxy_correlation() -> float:
-    """Re-derive E1's r = 0.90 between PC2 and the centroid proxy, on E1's own
-    2029-row plausible stack, now that the proxy has moved into
-    `core.geometry`. E1 itself is not re-run and `experiments/e1` is not
-    touched."""
-    _subset, aligned, _mean = shape_space.load_aligned_shapes()
-    scores = PCA(n_components=shape_space.N_COMPONENTS).fit_transform(
-        aligned.reshape(len(aligned), -1)
-    )
-    proxy = yaw_centroid_proxy(aligned)
-    return max(
-        (float(np.corrcoef(scores[:, pc], proxy)[0, 1]) for pc in range(shape_space.N_COMPONENTS)),
-        key=abs,
-    )
-
-
 def main(argv: list[str]) -> None:
-    del argv  # no arguments: deterministic given data/cache/splits.csv
+    del argv  # no arguments: deterministic given data/cache/splits.csv and the committed checkpoints
 
     if not SPLITS_PATH.exists():
         print(f"error: {SPLITS_PATH} does not exist.", file=sys.stderr)
         sys.exit(1)
+    for name, path in CHECKPOINTS.items():
+        if not path.exists():
+            print(f"error: {name} checkpoint {path} does not exist.", file=sys.stderr)
+            sys.exit(1)
 
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     features = load_features()
-    y, split, classes = features.y, features.split, features.classes
+    y, classes = features.y, features.classes
     labels = sorted(set(y.tolist()))
+
     aligned = features.coord_X.reshape(len(features.coord_X), N_NODES, 2)
-    raw_shapes, _label, _split = load_raw_shapes()
-    image_paths = load_splits_cache()["image_path"].tolist()
-
-    # 1. Pose, before anything is scored.
-    measured = measure_pose(aligned)
-    rho = pose.spearman_rho(np.abs(measured["s"]), np.tan(np.radians(measured["theta"])))
-    rho_ci = scoring.spearman_ci(np.abs(measured["s"]), np.tan(np.radians(measured["theta"])))
-    print(f"r_frontal: {measured['r_frontal']}")
-    print(f"internal control: Spearman rho = {rho:.3f}, CI {rho_ci}")
-
-    bins = freeze_bins(measured["theta"], split, y, classes.index("uncomfortable"))
-    bin_index = bins.pop("bin_index")
-    print(f"bins: {bins['n_bins']}, edges {bins['theta_edges']}, fallback={bins['fallback_taken']}")
-
-    d_rel = measured["d_rel"][np.isfinite(measured["d_rel"])]
-    d_rel_chin = measured["d_rel_chin"][np.isfinite(measured["d_rel_chin"])]
-    out_of_domain_by_percentile = {
-        p: int(pose.yaw_degrees(measured["ratio"], r)[1].sum())
-        for p, r in measured["r_frontal"].items()
-    }
+    ratios = yaw_foreshortening_ratio(aligned)
+    r_frontal = pose.frontal_ratio(ratios, pose.FRONTAL_PERCENTILE)
+    theta, out_of_domain = pose.yaw_degrees(ratios, r_frontal)
+    theta_edges, bin_index = scoring.quantile_bins(theta, pose.N_BINS)
+    print(f"r_frontal: {r_frontal:.4f}, out-of-domain rows: {int(out_of_domain.sum())}")
+    print(f"bin edges (deg): {[round(float(e), 1) for e in theta_edges]}")
 
     config = {
-        "seed": SEED,
-        "n_splits": N_SPLITS,
-        "classes": list(USABLE_CLASSES),
+        "n_rows": len(y),
+        "classes": classes,
         "git_sha": git_sha(),
         "splits_path": str(SPLITS_PATH.relative_to(ROOT)),
         "splits_sha256": sha256(SPLITS_PATH),
-        "n_rows": len(y),
-        "estimators": {
-            "family_1": "core.geometry.yaw_foreshortening_ratio, pair (4, 8), vertical to point 2",
-            "family_2": "core.geometry.yaw_midline_offset, midline 16, pair (4, 8)",
-            "legacy": "core.geometry.yaw_centroid_proxy (E1's quantity, not a binning quantity)",
-        },
         "frontal_percentile": pose.FRONTAL_PERCENTILE,
-        "frontal_percentile_sweep": list(pose.FRONTAL_PERCENTILE_SWEEP),
-        "r_frontal": {str(p): v for p, v in measured["r_frontal"].items()},
-        "out_of_domain_rows": {str(p): v for p, v in out_of_domain_by_percentile.items()},
-        "bins": as_json(bins),
-        "ratio_edges": [
-            ratio_of_theta_edge(edge, measured["r_frontal"][pose.FRONTAL_PERCENTILE])
-            for edge in bins["theta_edges"]
-        ],
-        "internal_control": {
-            "spearman_rho": rho,
-            "spearman_ci": list(rho_ci),
-            "bootstrap_b": scoring.BOOTSTRAP_B,
-            "bootstrap_seed": scoring.BOOTSTRAP_SEED,
-            "rho_thresholds": {"yaw": pose.RHO_YAW, "withdraw": pose.RHO_WITHDRAW},
-        },
-        "d_rel": {
-            "philtrum_median": float(np.median(d_rel)),
-            "philtrum_iqr": [float(np.percentile(d_rel, 25)), float(np.percentile(d_rel, 75))],
-            "chin_median": float(np.median(d_rel_chin)),
-            "chin_iqr": [float(np.percentile(d_rel_chin, 25)), float(np.percentile(d_rel_chin, 75))],
-            "min_degrees": pose.D_REL_MIN_DEGREES,
-            "n_rows_used": len(d_rel),
-        },
-        "sign_split": {
-            "negative_s": int((measured["s"] < 0).sum()),
-            "positive_s": int((measured["s"] > 0).sum()),
-        },
-        "centroid_proxy_vs_theta_r": float(np.corrcoef(measured["centroid_proxy"], measured["theta"])[0, 1]),
-        "centroid_proxy_abs_max": float(np.abs(measured["centroid_proxy"]).max()),
-        "e1_best_pc_centroid_proxy_r": e1_centroid_proxy_correlation(),
+        "r_frontal": r_frontal,
+        "out_of_domain_rows": int(out_of_domain.sum()),
+        "theta_edges": [float(e) for e in theta_edges],
+        "checkpoints": {name: str(path.relative_to(ROOT)) for name, path in CHECKPOINTS.items()},
+        "evaluation": "in_sample_full_dataset_checkpoint",
     }
-    # Frozen before any arm is scored; the reproduction deltas are added back
-    # after the arms run.
-    (RUN_DIR / "config.json").write_text(json.dumps(config, indent=2))
-    print(f"froze {RUN_DIR / 'config.json'} before scoring any arm")
 
-    # 2. Arms.
-    arms = build_arms(features, measured["theta"])
-    all_metrics, oof_preds, reproduction = {}, {}, {}
-    for name in ALL_ARMS:
-        X, build_model = arms[name]
-        print(f"running {name}...")
-        metrics = run_arm(name, X, build_model, y, split)
-        oof = np.array(metrics.pop("oof_pred"))
-        oof_preds[name] = oof
-        reproduction[name] = reproduction_check(name, metrics)
-        metrics["labels"] = classes
-        metrics["model"] = name
-        metrics["n_features"] = N_FEATURES[name]
-        metrics["pooled_kappa"] = float(cohen_kappa_score(y, oof, labels=labels))
-        metrics["pooled_kappa_ci"] = list(scoring.kappa_ci(y, oof, labels))
-        metrics["pooled_confusion_matrix"] = confusion_matrix(y, oof, labels=labels).tolist()
-        metrics["per_bin"] = as_json(
-            bin_metrics(y, oof, split, bin_index, labels, bins, measured["r_frontal"], measured["ratio"])
-        )
+    all_metrics = {}
+    for name in CHECKPOINTS:
+        print(f"scoring {name}...")
+        pred = predict_arm(name, features)
+        metrics = {
+            "model": name,
+            "labels": classes,
+            "evaluation": "in_sample_full_dataset_checkpoint",
+            "pooled_kappa": float(cohen_kappa_score(y, pred, labels=labels)),
+            "pooled_kappa_ci": list(scoring.kappa_ci(y, pred, labels)),
+            "macro_f1": float(f1_score(y, pred, average="macro", labels=labels)),
+            "accuracy": float(accuracy_score(y, pred)),
+            "pooled_confusion_matrix": confusion_matrix(y, pred, labels=labels).tolist(),
+            "per_bin": bin_metrics(y, pred, bin_index, labels, pose.N_BINS),
+        }
         all_metrics[name] = metrics
         out_dir = RUN_DIR / name
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
-        print(
-            f"  {name}: pooled kappa {metrics['pooled_kappa']:.3f}, "
-            f"reproduction {reproduction[name]}"
-        )
+        print(f"  {name}: pooled kappa {metrics['pooled_kappa']:.3f}, macro F1 {metrics['macro_f1']:.3f}")
 
-    config["reproduction_check"] = reproduction
     (RUN_DIR / "config.json").write_text(json.dumps(config, indent=2))
 
-    # 3. Verdicts.
-    verdict_arm = max(MODEL_ARMS, key=lambda name: all_metrics[name]["pooled_kappa"])
-    verdict_metrics = all_metrics[verdict_arm]
-    q3_status, q3_text = scoring.q3_verdict(verdict_arm, verdict_metrics["per_bin"], rho, rho_ci)
-    print(f"Q3: {q3_status}")
-
-    cm = np.array(verdict_metrics["pooled_confusion_matrix"])
-    pairs = pair_statistics(y, oof_preds[verdict_arm], cm, classes)
-    candidates = [p for p in pairs if p["candidate"]]
-    # The pre-registered rule retrains only for a candidate pair. With no
-    # candidate, the highest cross-talk pair is retrained anyway, so the null
-    # path rests on a measurement rather than on an argument; it cannot change
-    # the verdict, which already failed the thresholds.
-    to_retrain = candidates[0] if candidates else max(pairs, key=lambda p: p["crosstalk"])
-    X, build_model = arms[verdict_arm]
-    merge, merged_metrics = run_merge(
-        to_retrain, verdict_arm, X, build_model, y, oof_preds[verdict_arm], split
-    )
-    merged_metrics.pop("oof_pred")
-    merged_dir = RUN_DIR / "merged" / verdict_arm
-    merged_dir.mkdir(parents=True, exist_ok=True)
-    (merged_dir / "metrics.json").write_text(json.dumps(merged_metrics, indent=2))
-
-    q4_status, q4_text = scoring.q4_verdict(
-        pairs,
-        merge if candidates else None,
-        verdict_arm,
-        verdict_metrics["pooled_kappa"],
-        tuple(verdict_metrics["pooled_kappa_ci"]),
-    )
-    print(f"Q4: {q4_status}")
-    (RUN_DIR / "merge.json").write_text(
-        json.dumps(
-            {
-                "verdict_arm": verdict_arm,
-                "pooled_confusion_matrix": cm.tolist(),
-                "classes": classes,
-                "thresholds": {
-                    "crosstalk": scoring.CROSSTALK_THRESHOLD,
-                    "pairwise_kappa_ci_contains_zero": True,
-                },
-                "pairs": as_json(pairs),
-                "retrained": as_json(merge),
-                "retrained_is_candidate": bool(candidates),
-                "status": q4_status,
-            },
-            indent=2,
-        )
-    )
-
-    # 4. Per-row artifact: every table in the README recomputes from this.
-    columns = {
-        "row": np.arange(len(y)),
-        "image_path": image_paths,
-        "split": split,
-        "y_true": [classes[v] for v in y],
-        "foreshortening_ratio": measured["ratio"],
-        "theta_degrees": measured["theta"],
-        "midline_offset_s": measured["s"],
-        "midline_offset_s_chin": measured["s_chin"],
-        "d_rel": measured["d_rel"],
-        "out_of_domain": measured["out_of_domain"].astype(int),
-        "bin": bin_index,
-        "centroid_proxy": measured["centroid_proxy"],
-        **{f"pred_{name}": [classes[v] for v in oof_preds[name]] for name in ALL_ARMS},
-    }
-    pd.DataFrame(columns).to_csv(RUN_DIR / "per_row.csv", index=False)
-
-    # 5. Plots and the manual-review montage.
-    plot_per_bin_kappa({name: all_metrics[name]["per_bin"] for name in ALL_ARMS}, PLOTS_DIR / "kappa_per_bin.png")
-    plot_estimator_agreement(measured["theta"], measured["s"], rho, PLOTS_DIR / "estimator_agreement.png")
-    plot_pose_distributions(measured, bins, PLOTS_DIR / "pose_distributions.png")
-    plot_confusion_matrix(cm, classes, f"E4: {verdict_arm} pooled out-of-fold", PLOTS_DIR / "pooled_confusion_matrix.png")
-    montage = write_yaw_extremes_montage(
-        raw_shapes, image_paths, measured, RUN_DIR / "yaw_extremes_manual_review.png"
-    )
-    (RUN_DIR / "yaw_extremes_manual_review.json").write_text(json.dumps(montage, indent=2))
-    print(f"wrote {RUN_DIR / 'yaw_extremes_manual_review.png'} -- inspect it before writing the README")
-
-    write_readme(
-        config,
-        all_metrics,
-        bins,
-        measured,
-        classes,
-        load_splits_cache()["label"].value_counts().reindex(USABLE_CLASSES).to_dict(),
-        verdict_arm,
-        merge,
-    )
+    plot_kappa_per_bin({name: all_metrics[name]["per_bin"] for name in CHECKPOINTS}, PLOTS_DIR / "kappa_per_bin.png")
+    write_readme(config, all_metrics, classes)
     print(f"wrote {RUN_DIR / 'README.md'}")
-
-    print("\n" + q3_text + "\n\n" + q4_text)
 
 
 if __name__ == "__main__":
