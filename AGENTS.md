@@ -41,29 +41,8 @@ Documents
 
 Orchestrator
 
-The main session is the orchestrator for whichever track it's currently
-running. It never grooms, implements, tests, or reviews itself — that's
-what the subagents in each track's role docs are for. It does not mix
-the two tracks' lifecycles in one loop: pick a track, run that track's
-process file's lifecycle to completion or to its next natural stopping
-point, then switch.
+The main session is the orchestrator for whichever track it's currently running. It never grooms, implements, tests, or reviews itself — that's what the subagents in each track's role docs are for. It does not mix the two tracks' lifecycles in one loop: pick a track, run that track's process file's lifecycle to completion or to its next natural stopping point, then switch.
 
 Cross-track dependency
 
-There are two handoffs between tracks. `models/class_means.json`
-(per-class Procrustes mean shapes) shipped at E1, ahead of the model —
-the app's warper (PLAN_PROJECT.md M3) depends on it, not on the
-trained classifier, which is what makes M5's fallback (manual class
-picker) actually work. The second is `models/expression_head.onnx` +
-its manifest entry, gated by the research track's Export Verifier
-(`docs/team/export-verifier.md`). The project track does not wait on
-the second one to make progress — that's exactly what M5's fallback
-is for. If the project track picks up work that consumes the real
-model, check the manifest and the Export Verifier's PASS exist first;
-if they don't, that work isn't groomable yet and goes back to the
-backlog.
-
-If PLAN_PROJECT.md work falls behind schedule, research stops — this is
-stated directly in PLAN_RESEARCH.md ("If the app is behind, research
-stops. The app is what gets graded.") and the orchestrator should treat
-it as a hard rule, not a suggestion to weigh against research momentum.
+There are two handoffs between tracks. `models/class_means.json` (per-class Procrustes mean shapes) shipped at E1, ahead of the model — the app's warper (PLAN_PROJECT.md M3) depends on it, not on the trained classifier, which is what makes M5's fallback (manual class picker) actually work. The second is `models/expression_head.onnx` + its manifest entry, gated by the research track's Export Verifier (`docs/team/export-verifier.md`). The project track does not wait on the second one to make progress — that's exactly what M5's fallback is for. If the project track picks up work that consumes the real model, check the manifest and the Export Verifier's PASS exist first; if they don't, that work isn't groomable yet and goes back to the backlog.
